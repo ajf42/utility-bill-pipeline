@@ -1,0 +1,83 @@
+# DECISIONS.md — Architecture Decision Record
+
+Every significant architectural or engineering decision is logged here. Each entry uses the ADR format: **Status**, **Context**, **Decision**, **Consequences**. Newer decisions append to the bottom. Superseded decisions are kept and marked as such — history is not rewritten.
+
+The authoritative design spec is [DESIGN.md](DESIGN.md). Decisions logged here either implement, refine, or revise that spec.
+
+---
+
+## ADR-001 — Python + FastAPI + pydantic v2 as the stack
+
+**Status:** Accepted (2026-05-15)
+
+**Context:** The prototype is a data-shaped service with HTTP ingress, runtime validation of messy inputs, and an Anthropic API call. The 20-hour build window does not allow time for stack choices to be wrong. The audience (Matt) is a systems-intuition operations leader; readability of the resulting code matters more than runtime micro-performance.
+
+Alternatives considered: Node + Express + Zod (rejected — weaker tabular tooling, and the structural-quality signals lean on pandas-shaped work); Go + chi (rejected — slower to write, weaker AI tooling); a notebook-first prototype (rejected — would not demonstrate the production-discipline pattern the methodology artifacts depend on).
+
+**Decision:** Python 3.11+ runtime. FastAPI for the HTTP surface (lightweight, async-native, OpenAPI built-in). pydantic v2 for all DTOs, internal data passing, and validation. Anthropic SDK for the single Claude call in the Resolution Drafter. pandas + openpyxl for tabular work. pytest for tests. SQLite for persistence (see [ADR-002](#adr-002--sqlite-for-persistence-in-the-prototype)).
+
+**Consequences:** A familiar, productive stack with strong documentation. The pydantic v2 choice constrains every internal data type to a serializable, inspectable shape, which serves the glass-box requirement. FastAPI's `Depends` becomes the dependency-injection mechanism the coding patterns rely on. The cost: anyone reading the repo needs Python 3.11+ available.
+
+---
+
+## ADR-002 — SQLite for persistence in the prototype
+
+**Status:** Accepted (2026-05-15)
+
+**Context:** The reconciliation and audit-log layers need a real datastore — real SQL semantics, real foreign keys, real indexes — for the pipeline to do honest work. A mock store would make every claim about reconciliation suspect. Twenty hours does not buy time to stand up Postgres with realistic ergonomics, and infrastructure setup steals from the artifacts that actually differentiate the build.
+
+Alternatives considered: in-memory dict-backed store (rejected — would not exercise schema, FK, or query semantics, and the reconciliation story collapses); Postgres in Docker (rejected — infrastructure overhead, friction for a fresh reader running the prototype).
+
+**Decision:** SQLite, file-on-disk, schema defined in `src/db/schema.sql`. Tables follow the entity model from [ADR-005](#adr-005--entity-model-aligned-to-measurabls-published-hierarchy): `sites`, `accounts`, `meters`, `readings`, `audit_entries`. Reconciliation reads prior readings from this store; AutoResolve writes append-only readings; every triage decision writes an audit entry.
+
+**Consequences:** A reader can clone the repo and run the prototype with zero infrastructure. Foreign keys and indexes give the reconciliation and gap/overlap heuristics real teeth. The story for production is explicitly documented: Postgres with read replicas for dashboard joins, a queue-based write pattern, and CDC streams to downstream consumers. The scale-to-production doc covers this in detail; the prototype's job is to make the production hook obvious without pretending to be production.
+
+---
+
+## ADR-003 — Structural-only confidence model (no LLM self-reported confidence)
+
+**Status:** Accepted (2026-05-15)
+
+**Context:** Every normalized field needs a confidence signal so triage can decide what to trust. The temptingly-cheap path is to ask the LLM to score its own extractions. That path is wrong for this audience and this problem: LLM-self-reported confidence is well-known to be poorly calibrated, and Matt's situation is "I am liable for the output and cannot trust black boxes." Confidence that originates inside the model cannot be audited later.
+
+Alternatives considered: LLM self-reported confidence (rejected as above); cross-extraction-agreement — run extraction twice with different prompts and treat agreement as the signal (the right answer at production scale, but not earned in 20 hours and not where the prototype's leverage lives).
+
+**Decision:** Confidence comes from **structural quality signals only**: type/format validation (does the date parse, is the number numeric, is the unit in the known set), plausible-range checks (kWh positive, billing period 25–35 days for monthly, etc.), provider presence in the reference library, and within-row agreement of unit/currency/account-type. The signal is **flag-liberal**: better to flag five fields and have three turn out fine than to pass a real error through. Triage decides what to do with flagged fields; the structural layer does not gate.
+
+**Consequences:** Every confidence signal is inspectable and reproducible — a flagged field has a named reason that a back-office reviewer can read. The prototype tells a credible story about why it trusts what it trusts. The deferred richer model (cross-extraction-agreement) is named in the scale-to-production doc with real architectural treatment, and that deferral is itself a piece of evidence about how the build was reasoned about.
+
+---
+
+## ADR-004 — Three-route triage (AutoResolve / DraftForHumanReview / Escalate)
+
+**Status:** Accepted (2026-05-15)
+
+**Context:** Triage is the act of deciding, per bill, what happens next. The decision space has obvious extremes — "the bill is clean, write it" and "the bill is unfixable, send it to a team" — but Matt's operational reality is that the middle is where most of the cost lives. A two-route system collapses the middle into Escalate and loses the highest-leverage AI surface in the system. A four-route system pulls in AutoEstimate, which is genuinely useful but is high logic complexity and the most likely route to be implemented poorly in a 20-hour window.
+
+Alternatives considered: two routes — Resolve / Escalate (rejected, see above); four routes including AutoEstimate (deferred to scale-to-production where it gets real treatment instead of a rushed one).
+
+**Decision:** Three routes.
+
+1. **AutoResolve** — all structural quality signals pass, no high-severity flags, ≤1 medium-severity flag. Written to readings table.
+2. **DraftForHumanReview** — moderate severity or fixable issues. Triage calls the Resolution Drafter Service; a proposed action, drafted customer email, and basis note are attached to the audit entry. Human approves or rejects.
+3. **Escalate** — high-severity flags, low structural quality, or unresolvable reconciliation failures. Carries a **routing key** mapping to a specific exception class (`connect_integrity`, `meter_unassigned`, `overlap`, `format_mismatch`, `inactive_meter`, `uncategorized`).
+
+The reasoning behind each decision is recorded in the audit entry, not just the decision itself.
+
+**Consequences:** The middle route is where the demo highlight lives — a Claude-drafted customer email on a unit-mismatch case is the "Claude as your back-office writer, gated on human approval" moment. The `uncategorized` escalation bucket is deliberately visible: it makes weak spots in the rule set legible to Matt's teams instead of swallowing them. The deferred AutoEstimate route is named and treated in the scale-to-production doc; this is the explicit scale path for triage and the prototype's three-route model is a clean foundation it slots onto.
+
+---
+
+## ADR-005 — Entity model aligned to Measurabl's published hierarchy
+
+**Status:** Accepted (2026-05-15)
+
+**Context:** A utility ingestion pipeline can be modeled many ways. Most generic data-cleaning tutorials would land on a flat "bill" entity with optional foreign keys. The audience and problem demand the opposite: Matt's teams work inside Measurabl's actual hierarchy every day, the Help Center documents that hierarchy unambiguously, and the published bulk-upload templates encode the field-level constraints (unit locked to meter, currency locked to meter, building name must match a Site, readings are append-only).
+
+Alternatives considered: a generic Bill entity with loose FKs (rejected — collapses domain constraints that matter); modeling only the layers the heuristics touch directly, e.g., Meter and Reading (rejected — would make foreign keys dishonest, and "the entity model matches your published one" is a credibility signal worth more than the lines of code it costs).
+
+**Decision:** The full chain is modeled: **Portfolio → Site → Account → Meter → Reading**. Upper levels (Portfolio, Site) are tiny fixture tables; their job is to make foreign keys honest. Field detail follows Measurabl's published templates: Account Number / Account Type / Generation Account flag on Account; Unique Meter ID, naming convention, Start/End dates, Type, Unit (locked), Currency (locked), Landlord-or-Tenant-paid, Active toggle on Meter; Period Start/End, Usage, Usage Units, Cost, Currency, Demand kW, Demand Spend, Energy Exported on Reading.
+
+Hard rules encoded in validation: meter locked to one unit (mismatch = high-severity flag); readings append-only (corrections via flagged workflow, not overwrite); building name must match an existing Site (mismatch = high-severity); reading on an inactive meter = high-severity.
+
+**Consequences:** Walking Matt through `src/models/entities.py` is recognizable on sight. Every validation rule has a clean home (the entity it constrains). The cost is a few extra fixture rows for Portfolios and Sites; the benefit is that the prototype demonstrably understands the operational object model rather than imposing a generic one.
