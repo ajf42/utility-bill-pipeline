@@ -19,6 +19,12 @@ Every design decision in this document carries an implicit tag of **prototype**,
 
 ---
 
+## Notes for the new Claude instance
+
+If you are reading this as the seed for a build session: this is the working spec. Start at Phase 1 of Section 6 and execute. The mandatory-on-every-change rules in Section 8 govern every commit. Update CLAUDE.md, DECISIONS.md, and TASKS.md as you go — they are not afterthoughts, they are the deliverable Matt cares about most. The audience for the build is Matt Richardson at Measurabl; calibrate every decision to "what would a process-and-operations leader want to see documented here." When in doubt, log the decision. Architecture choices in this document are starting points and may be revised — when they are, log the revision in DECISIONS.md with rationale.
+
+---
+
 ## 1. What This Is
 
 A working prototype of an AI-augmented utility bill ingestion and quality assurance pipeline. The system accepts a utility bill row (single or batch), normalizes that data against a reference library, reconciles it against meter history in a real datastore, validates it against a schema and a set of domain heuristics, and decides per-record whether the result auto-resolves, gets a Claude-drafted resolution proposal for human review, or escalates to a routed team queue. Every step is logged to an audit trail.
@@ -589,9 +595,3 @@ utility-bill-pipeline/
   docs/
     architecture.md                 Architecture diagram + narrative
 ```
-
----
-
-## Notes for the new Claude instance
-
-If you are reading this as the seed for a build session: this is the working spec. Start at Phase 1 of Section 6 and execute. The mandatory-on-every-change rules in Section 8 govern every commit. Update CLAUDE.md, DECISIONS.md, and TASKS.md as you go — they are not afterthoughts, they are the deliverable Matt cares about most. The audience for the build is Matt Richardson at Measurabl; calibrate every decision to "what would a process-and-operations leader want to see documented here." When in doubt, log the decision. Architecture choices in this document are starting points and may be revised — when they are, log the revision in DECISIONS.md with rationale.

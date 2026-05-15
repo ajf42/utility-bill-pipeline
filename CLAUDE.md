@@ -12,6 +12,17 @@ When the two appear to disagree, DESIGN.md wins for spec questions; CLAUDE.md wi
 
 ---
 
+## Resuming work after a broken session
+
+If picking up after an interrupted Claude Code session, a context compaction event, a multi-day pause, or a crash:
+
+1. Re-read [DESIGN.md](DESIGN.md) (top to bottom) and [CLAUDE.md](CLAUDE.md) (this document) before doing anything else.
+2. Run `git status` and `git log --oneline -10` to see what was committed vs. what is uncommitted.
+3. Check [TASKS.md](TASKS.md) for what was in flight — the last unchecked item with no commit hash is the most likely resume point.
+4. If [TASKS.md](TASKS.md), the filesystem, and `git log` appear to disagree on what state the project is in, stop and surface the disagreement before continuing. Do not infer.
+
+---
+
 ## Project description
 
 A working prototype of an AI-augmented utility bill ingestion and quality assurance pipeline. The system accepts a utility bill row (single or batch), normalizes that data against a reference library, reconciles it against meter history in a real datastore, validates it against a schema and a set of domain heuristics, and decides per-record whether the result auto-resolves, gets a Claude-drafted resolution proposal for human review, or escalates to a routed team queue. Every step is logged to an audit trail. The prototype targets the operational problem set Measurabl runs every day; the goal is not to build a production system but to demonstrate a defensible architectural approach to the problem and the engineering discipline that would scale it across an offshore team.
@@ -108,6 +119,8 @@ Eight rules govern every change; see [DESIGN.md](DESIGN.md) §8 for the full lis
 **Current-state update rule.** The `Current state` section of CLAUDE.md MUST be updated on every commit that adds, removes, or significantly modifies a file, directory, service, endpoint, model, or store. This is the highest-churn part of the working memory and the easiest to silently drift.
 
 **Self-maintenance.** Edits to CLAUDE.md should be called out at the top of the response that makes them, so reviewers see the working-memory change without needing to diff.
+
+**Context budget.** CLAUDE.md targets 200 lines and must not exceed 300. If a commit would push CLAUDE.md past 300 lines, compress before continuing: move detail into per-directory `README.md` files, into [DESIGN.md](DESIGN.md) where it represents spec, or into archive sections in CLAUDE.md itself. The `Current state` section is the primary compression target.
 
 ### Coding patterns
 
