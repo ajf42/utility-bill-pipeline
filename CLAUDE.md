@@ -14,7 +14,7 @@ The walkthrough audience is Matt Richardson, who owns Measurabl's back-office fu
 
 ## Current state
 
-Phase 1 — Foundation, bootstrap step.
+Phase 1 — Foundation. Bootstrap and pydantic data models complete.
 
 What exists:
 
@@ -22,20 +22,28 @@ What exists:
 - [DESIGN.md](DESIGN.md) — authoritative spec
 - [README.md](README.md) — skeleton with architecture diagram placeholder, quick start, walkthrough placeholder, status
 - [CLAUDE.md](CLAUDE.md) — this file
-- [DECISIONS.md](DECISIONS.md) — initialized with ADR-001 through ADR-005
+- [DECISIONS.md](DECISIONS.md) — initialized with ADR-001 through ADR-006
 - [TASKS.md](TASKS.md) — Phase 2–4 backlog
-- Empty source tree with `__init__.py` placeholders under `src/` and subpackages
+- pydantic v2 data models under `src/models/` (see Models below)
+- `tests/test_models.py` — 12 tests covering instantiation, enum/format validation, serialization roundtrip, and the deferred cross-field check per ADR-006
 
 What does **not** yet exist:
 
-- Any pydantic models
 - Any SQLite schema, store implementations, or fixtures
 - Any service code (normalization, reconciliation, validation, triage, drafter, audit, output)
 - Any route handlers (`/bills`, `/batches`)
-- Any tests
 - Any sample bills or scenarios
 
-The next unit of work is the rest of Phase 1 (data models, SQLite schema, stores, fixtures) per [TASKS.md](TASKS.md) and [DESIGN.md](DESIGN.md) §6 Phase 1.
+The next unit of work is the rest of Phase 1 (SQLite schema, stores, fixtures) per [TASKS.md](TASKS.md) and [DESIGN.md](DESIGN.md) §6 Phase 1.
+
+### Models
+
+The pydantic models are the contracts every downstream stage and the audit log consume. Foreign-key fields are typed as `int` (SQLite rowids); relational integrity lives in the DB layer.
+
+- [src/models/entities.py](src/models/entities.py) — Measurabl-aligned hierarchy: `Portfolio`, `Site`, `Account`, `Meter`, `Reading`, plus the enums `Region`, `AccountType`, `Unit`, `MeterType`, `LandlordOrTenant`. Currency is validated to ISO 4217 shape; unit-of-measure to the canonical set (kWh, therms, MMBtu, m3, ccf, gallons, HCF).
+- [src/models/bill.py](src/models/bill.py) — pipeline-stage artifacts modeled by inheritance: `RawBillInput` → `NormalizedBill` → `ReconciledBill` → `ValidatedBill`. Each stage adds fields without replacing prior ones. Plus the `SourceMode` enum.
+- [src/models/quality.py](src/models/quality.py) — `QualityFlag` and `TriageDecision`, plus the enums `Severity`, `FlagType`, `RoutingKey`, `TriageRoute`.
+- [src/models/audit.py](src/models/audit.py) — `AuditEntry`, the full lineage record persisted per bill.
 
 ## File structure (as it stands)
 
@@ -50,11 +58,18 @@ utility-bill-pipeline/
   .gitignore
   src/
     __init__.py
-    models/__init__.py
+    models/
+      __init__.py
+      entities.py
+      bill.py
+      quality.py
+      audit.py
     db/__init__.py
     services/__init__.py
     routes/__init__.py
-  tests/__init__.py
+  tests/
+    __init__.py
+    test_models.py
   samples/__init__.py
   docs/__init__.py
 ```

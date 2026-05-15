@@ -81,3 +81,21 @@ Alternatives considered: a generic Bill entity with loose FKs (rejected — coll
 Hard rules encoded in validation: meter locked to one unit (mismatch = high-severity flag); readings append-only (corrections via flagged workflow, not overwrite); building name must match an existing Site (mismatch = high-severity); reading on an inactive meter = high-severity.
 
 **Consequences:** Walking Matt through `src/models/entities.py` is recognizable on sight. Every validation rule has a clean home (the entity it constrains). The cost is a few extra fixture rows for Portfolios and Sites; the benefit is that the prototype demonstrably understands the operational object model rather than imposing a generic one.
+
+---
+
+## ADR-006 — Cross-field validation between Reading and Meter is deferred to the validation service
+
+**Status:** Accepted (2026-05-15)
+
+**Context:** Two field-level rules from [ADR-005](#adr-005--entity-model-aligned-to-measurabls-published-hierarchy) — that a `Reading.usage_units` must match its parent `Meter.unit`, and that `Reading.currency` must match `Meter.currency` — could be enforced at three different layers: the pydantic models (raise on construction), the validation service (emit a `QualityFlag` with severity), or the database layer (CHECK constraint joining across tables). Each placement has a cost.
+
+Enforcing at the pydantic boundary would mean either (a) carrying a reference to the parent meter inside `Reading`, which inverts ownership and breaks the append-only, self-contained-artifact property the pipeline relies on, or (b) using a custom validator with external lookup, which couples model construction to an injected store and defeats the point of pydantic as a pure data contract. It would also crash the pipeline on the exact inputs we most want to *see* and route — a unit mismatch is a high-leverage demo moment for the Resolution Drafter (see DESIGN.md §4 "Triage Service" — the unit-mismatch case is the canonical DraftForHumanReview path).
+
+Enforcing only at the database CHECK level loses the structured flag — the back-office team would see a constraint failure, not a `UNIT_MISMATCH` flag with severity and routing key.
+
+Alternatives considered: pydantic-level `field_validator` requiring an injected `Meter` (rejected, see above); SQLite trigger raising on insert (rejected — same structured-flag problem, plus harder to test).
+
+**Decision:** Cross-field validation between `Reading` and its parent `Meter` is the **validation service's** responsibility, not the pydantic model's. The model accepts a mismatch on construction so the validation service can emit a structured `QualityFlag` (`UNIT_MISMATCH` or `CURRENCY_MISMATCH`, high-severity), which triage then routes — typically to DraftForHumanReview for unit mismatches (Resolution Drafter proposes the corrective unit) and to Escalate with `FORMAT_MISMATCH` for currency mismatches. The behavior is pinned by `test_reading_unit_currency_independent_of_parent_meter` in `tests/test_models.py`.
+
+**Consequences:** The mismatched-unit demo moment lives. Every cross-field check has one home (the validation service), which is also where the gap and overlap heuristics live — placement is predictable. The cost is that "a Reading exists with units that don't match its Meter" can briefly be a valid in-memory state between model construction and the validation step; in practice this only happens inside the pipeline call where the validation service runs synchronously immediately after, so no caller of the pipeline observes the invalid state. The DB layer will additionally encode the unit and currency on the meter so the store can refuse an actually-bad write on the AutoResolve path, providing belt-and-suspenders without changing where the structured flag originates.
