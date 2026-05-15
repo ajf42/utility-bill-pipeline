@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Working Memory
 
-This file is the project's living working memory. It describes **what exists right now**, **what the rules are**, and **how to work in this repo**. Update it whenever a completed task changes anything it describes. When CLAUDE.md is modified in a change, surface the change explicitly in the response so it is visible at a glance.
+This file is the project's living working memory. It describes **what exists right now**, **what the rules are**, and **how to work in this repo**. Refresh it on every commit that touches anything described here, and call out any CLAUDE.md edit at the top of the response that makes it — this is the easiest piece of state to overlook.
 
 ## How this document relates to DESIGN.md
 
@@ -32,7 +32,7 @@ What exists:
 - [TASKS.md](TASKS.md) — Phase 2–4 backlog
 - pydantic v2 data models under `src/models/` (see Models below)
 - `tests/test_models.py` — 12 tests covering instantiation, enum/format validation, serialization roundtrip, and the deferred cross-field check per ADR-006
-- `scripts/check_design_sync.py` + `tests/test_design_sync.py` — drift guard that fails if CLAUDE.md duplicates DESIGN.md §8 verbatim
+- `scripts/check_design_sync.py` + `tests/test_design_sync.py` — structural drift guard that parses DESIGN.md §8 at runtime and fails if any ≥12-word contiguous block from §8 also appears in CLAUDE.md (normalized comparison)
 
 What does **not** yet exist:
 
@@ -107,7 +107,7 @@ Eight rules govern every change; see [DESIGN.md](DESIGN.md) §8 for the full lis
 
 **Current-state update rule.** The `Current state` section of CLAUDE.md MUST be updated on every commit that adds, removes, or significantly modifies a file, directory, service, endpoint, model, or store. This is the highest-churn part of the working memory and the easiest to silently drift.
 
-**Self-maintenance.** When CLAUDE.md is modified in a change, surface the change explicitly in the response so it is visible at a glance.
+**Self-maintenance.** Edits to CLAUDE.md should be called out at the top of the response that makes them, so reviewers see the working-memory change without needing to diff.
 
 ### Coding patterns
 
@@ -131,4 +131,4 @@ If real utility bills are used in fixtures, strip all PII before committing. See
 
 **Ambiguity handling — confidence-filling on ambiguous spec is forbidden.** When [DESIGN.md](DESIGN.md) is silent or ambiguous on something a change requires, do not invent. Stop and flag the gap. Either ask the human, or add an explicit `TODO` comment in the code AND a note in [DECISIONS.md](DECISIONS.md) under the "Spec gaps observed" section. The cost of asking is low; the cost of inventing a constraint that DESIGN.md never sanctioned is high.
 
-**Drift check.** `scripts/check_design_sync.py` (also wired into pytest as `tests/test_design_sync.py`) fails if CLAUDE.md duplicates DESIGN.md §8 verbatim. The rules-summary section above must reference §8, not copy it.
+**Drift check.** `scripts/check_design_sync.py` (also wired into pytest as `tests/test_design_sync.py`) parses [DESIGN.md](DESIGN.md) §8 at runtime and fails if any ≥12-word contiguous block from §8 appears in CLAUDE.md after normalization (case, whitespace, markdown formatting, smart quotes/dashes folded). The rules-summary section above must reference §8, not copy it. The check is self-updating — when §8 is edited, the next test run uses the new text.
