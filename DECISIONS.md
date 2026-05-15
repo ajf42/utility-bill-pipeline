@@ -99,3 +99,13 @@ Alternatives considered: pydantic-level `field_validator` requiring an injected 
 **Decision:** Cross-field validation between `Reading` and its parent `Meter` is the **validation service's** responsibility, not the pydantic model's. The model accepts a mismatch on construction so the validation service can emit a structured `QualityFlag` (`UNIT_MISMATCH` or `CURRENCY_MISMATCH`, high-severity), which triage then routes — typically to DraftForHumanReview for unit mismatches (Resolution Drafter proposes the corrective unit) and to Escalate with `FORMAT_MISMATCH` for currency mismatches. The behavior is pinned by `test_reading_unit_currency_independent_of_parent_meter` in `tests/test_models.py`.
 
 **Consequences:** The mismatched-unit demo moment lives. Every cross-field check has one home (the validation service), which is also where the gap and overlap heuristics live — placement is predictable. The cost is that "a Reading exists with units that don't match its Meter" can briefly be a valid in-memory state between model construction and the validation step; in practice this only happens inside the pipeline call where the validation service runs synchronously immediately after, so no caller of the pipeline observes the invalid state. The DB layer will additionally encode the unit and currency on the meter so the store can refuse an actually-bad write on the AutoResolve path, providing belt-and-suspenders without changing where the structured flag originates.
+
+---
+
+## Spec gaps observed
+
+Gaps in [DESIGN.md](DESIGN.md) that surfaced during a build step and required either a decision or a clarification before proceeding. Per the ambiguity-handling rule in [CLAUDE.md](CLAUDE.md), inventing on ambiguous spec is forbidden — any gap encountered is logged here, optionally accompanied by a `TODO` in the code at the point of contact.
+
+When a gap is resolved (DESIGN.md updated, or a human decision recorded), leave the entry in place and mark it `(resolved in <ref>)` rather than deleting; the history of where the spec wasn't quite right is itself useful.
+
+- (none yet)

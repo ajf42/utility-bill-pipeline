@@ -2,7 +2,13 @@
 
 This file is the project's living working memory. It describes **what exists right now**, **what the rules are**, and **how to work in this repo**. Update it whenever a completed task changes anything it describes. When CLAUDE.md is modified in a change, surface the change explicitly in the response so it is visible at a glance.
 
-The authoritative spec is [DESIGN.md](DESIGN.md). When in conflict, DESIGN.md wins and CLAUDE.md is updated.
+## How this document relates to DESIGN.md
+
+[DESIGN.md](DESIGN.md) is the project specification — what the system should be, and the rules that govern building it. It changes deliberately and infrequently.
+
+CLAUDE.md is working memory — what currently exists, what is in flight, and quick-reference pointers into DESIGN.md. It changes after every commit that touches code, structure, or rules.
+
+When the two appear to disagree, DESIGN.md wins for spec questions; CLAUDE.md wins for "what does the repo look like right now." If a disagreement is structural (not just stale state), surface it and update DESIGN.md.
 
 ---
 
@@ -26,6 +32,7 @@ What exists:
 - [TASKS.md](TASKS.md) — Phase 2–4 backlog
 - pydantic v2 data models under `src/models/` (see Models below)
 - `tests/test_models.py` — 12 tests covering instantiation, enum/format validation, serialization roundtrip, and the deferred cross-field check per ADR-006
+- `scripts/check_design_sync.py` + `tests/test_design_sync.py` — drift guard that fails if CLAUDE.md duplicates DESIGN.md §8 verbatim
 
 What does **not** yet exist:
 
@@ -70,6 +77,9 @@ utility-bill-pipeline/
   tests/
     __init__.py
     test_models.py
+    test_design_sync.py
+  scripts/
+    check_design_sync.py
   samples/__init__.py
   docs/__init__.py
 ```
@@ -78,58 +88,47 @@ The full target structure (what this skeleton grows into) is enumerated in [DESI
 
 ---
 
-## Mandatory on every change
+## Build rules (summary)
 
-Verbatim from [DESIGN.md](DESIGN.md) §8.
+> Authoritative source: [DESIGN.md](DESIGN.md) §8. This section is a working-memory summary; the full text and any future revisions live in DESIGN.md.
 
-1. Code runs without errors
-2. All tests pass (`pytest`)
-3. Inline documentation updated for modified logic
-4. README updated if API surface or architecture changed
-5. DECISIONS.md updated if the change involved an architectural or engineering decision
-6. TASKS.md updated (task moved to done, commit hash recorded)
-7. CLAUDE.md updated if the change introduced new files, endpoints, services, or rules
+### Mandatory on every change
+
+Eight rules govern every change; see [DESIGN.md](DESIGN.md) §8 for the full list.
+
+1. Code runs
+2. Tests pass (`pytest`)
+3. Inline docs updated
+4. README updated when API surface or architecture changes
+5. DECISIONS.md updated when an architectural or engineering choice was made
+6. TASKS.md updated (task done, commit hash recorded)
+7. CLAUDE.md updated when files, directories, services, endpoints, models, stores, or rules change
 8. Committed under the commit convention, one commit per task
 
-Do not consider a task complete until all eight steps are done.
+**Current-state update rule.** The `Current state` section of CLAUDE.md MUST be updated on every commit that adds, removes, or significantly modifies a file, directory, service, endpoint, model, or store. This is the highest-churn part of the working memory and the easiest to silently drift.
 
-### CLAUDE.md self-maintenance
+**Self-maintenance.** When CLAUDE.md is modified in a change, surface the change explicitly in the response so it is visible at a glance.
 
-CLAUDE.md is updated whenever a completed task changes anything it describes. When CLAUDE.md is modified, surface the change explicitly in the response so it is visible at a glance.
+### Coding patterns
 
----
+Short summary: FastAPI `Depends` for dependency injection; thin route handlers (no business logic); stateless services with state in injected stores; async on I/O (especially Anthropic calls); pydantic for every DTO. See [DESIGN.md](DESIGN.md) §8 for the full list.
 
-## Coding patterns
+### Commit convention
 
-Verbatim from [DESIGN.md](DESIGN.md) §8.
-
-- Dependency injection via FastAPI's `Depends`. Constructor injection in service classes.
-- Thin controllers: route handlers accept the request, call a service, return the result. No business logic in route handlers.
-- Services are stateless. State lives in dependency-injected stores.
-- Error handling: services raise exceptions; route handlers catch and map to HTTP responses.
-- Async wherever I/O happens, especially Anthropic API calls.
-- Pydantic models for all DTOs and internal data passing.
+`<scope>: <imperative description>`. One task per commit. Commit hashes recorded in [TASKS.md](TASKS.md). See [DESIGN.md](DESIGN.md) §8 for examples.
 
 ### Sample scenarios
 
-Sample scenarios are not isolated rows — they are multi-bill stories that demonstrate stateful behavior. To demonstrate gap detection, two bills on the same meter with a gap. To demonstrate overlap, two bills on the same meter that overlap. Each scenario is documented in `samples/scenarios.md` with meter setup, bills involved, and expected pipeline output.
+Multi-bill stories that demonstrate stateful behavior (gap, overlap), not isolated rows. Documented in `samples/scenarios.md`. See [DESIGN.md](DESIGN.md) §8 for the full convention.
 
 ### Anonymization
 
-If real utility bills are referenced in fixtures, all PII (account numbers, customer names, addresses) is stripped before being committed. The README notes this explicitly.
+If real utility bills are used in fixtures, strip all PII before committing. See [DESIGN.md](DESIGN.md) §8.
 
 ---
 
-## Commit convention
+## Working with this codebase
 
-Verbatim from [DESIGN.md](DESIGN.md) §8.
+**Ambiguity handling — confidence-filling on ambiguous spec is forbidden.** When [DESIGN.md](DESIGN.md) is silent or ambiguous on something a change requires, do not invent. Stop and flag the gap. Either ask the human, or add an explicit `TODO` comment in the code AND a note in [DECISIONS.md](DECISIONS.md) under the "Spec gaps observed" section. The cost of asking is low; the cost of inventing a constraint that DESIGN.md never sanctioned is high.
 
-`<scope>: <imperative description>`
-
-Examples:
-
-- `normalize: add structural quality signals to normalization service`
-- `triage: implement three-route decision logic`
-- `docs: log decision on structural-only confidence model`
-
-One task per commit. Commits referenced in [TASKS.md](TASKS.md).
+**Drift check.** `scripts/check_design_sync.py` (also wired into pytest as `tests/test_design_sync.py`) fails if CLAUDE.md duplicates DESIGN.md §8 verbatim. The rules-summary section above must reference §8, not copy it.
