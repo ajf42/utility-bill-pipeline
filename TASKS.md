@@ -19,8 +19,8 @@ Phase 1 sub-items from [DESIGN.md](DESIGN.md) §6, with done items checked.
 - [x] README.md skeleton with placeholder for Mermaid diagram — commit `e602eeb`
 - [x] Mandatory-on-every-change rules documented in CLAUDE.md — commit `e602eeb`
 - [x] pydantic data models (`RawBillInput`, `NormalizedBill`, `ReconciledBill`, `ValidatedBill`, `TriageDecision`, `AuditEntry`, `QualityFlag`, `RoutingKey`) — commit `ad86a2f`
-- [ ] SQLite schema (DDL file) — commit `________`
-- [ ] Store implementations (MeterHistoryStore, AuditLogStore) — commit `________`
+- [x] SQLite schema (DDL file) — commit `db: add SQLite schema and store implementations` (lookup via `git log --grep`; hash self-references cannot be embedded in their own commit)
+- [x] Store implementations (MeterHistoryStore, AuditLogStore) — commit `db: add SQLite schema and store implementations` (lookup via `git log --grep`; hash self-references cannot be embedded in their own commit)
 - [ ] Fixture data: 3 sites, 5 accounts, 8 meters, 30+ historical readings — commit `________`
 
 ## Phase 2 — Single-Row Pipeline

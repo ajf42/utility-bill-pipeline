@@ -102,10 +102,25 @@ Alternatives considered: pydantic-level `field_validator` requiring an injected 
 
 ---
 
+## ADR-007 — Stdlib `sqlite3` for persistence, not an ORM
+
+**Status:** Accepted (2026-05-18)
+
+**Context:** The persistence layer needs CRUD across five tables, one cross-table join (the three-key meter resolution in reconciliation), an idempotent schema, and round-trippable storage of structured payloads on the audit log. The natural Python options were SQLAlchemy (Core or ORM), Peewee, or stdlib `sqlite3`. The audience for this build is Matt Richardson, an operations leader who reads SQL more comfortably than ORM call chains, and the prototype budget is 20 focused hours total.
+
+Alternatives considered: SQLAlchemy ORM (rejected — adds a dependency, introduces session/unit-of-work concepts that don't help the prototype and that obscure the SQL during a walkthrough); SQLAlchemy Core (rejected — Core-level SQL expressions still read less obviously than literal SQL strings, and the migration to Postgres in production is a connection-string change either way); Peewee (rejected — fewer warts than full SQLAlchemy but still ORM-flavored, still a dependency).
+
+**Decision:** Use stdlib `sqlite3` directly. Schema lives in [src/db/schema.sql](src/db/schema.sql) as literal SQL the audience can read on its own. Two store classes ([src/db/store.py](src/db/store.py)) wrap a `sqlite3.Connection` each, with `PRAGMA foreign_keys = ON` set per connection. Row-to-model and model-to-row translation are small private functions at the bottom of the file. All writes commit explicitly. Pydantic models from `src.models` are the only shapes the stores accept or return; SQL stays inside this module.
+
+**Consequences:** Walking Matt through [src/db/store.py](src/db/store.py) is walking him through SQL, which is the point. Zero added dependency surface. The cost is hand-mapping rows to models, which adds maybe 60 lines and is a known pattern. The production hook is unchanged: swap the connection target to Postgres and the SQL ports as-is (SQLite-specific bits — the `PRAGMA`, `TEXT` for dates — are isolated and documented). Cross-field validation between `Reading` and `Meter` from [ADR-006](#adr-006--cross-field-validation-between-reading-and-meter-is-deferred-to-the-validation-service) remains in the validation service; the store does not try to enforce it.
+
+---
+
 ## Spec gaps observed
 
 Gaps in [DESIGN.md](DESIGN.md) that surfaced during a build step and required either a decision or a clarification before proceeding. Per the ambiguity-handling rule in [CLAUDE.md](CLAUDE.md), inventing on ambiguous spec is forbidden — any gap encountered is logged here, optionally accompanied by a `TODO` in the code at the point of contact.
 
 When a gap is resolved (DESIGN.md updated, or a human decision recorded), leave the entry in place and mark it `(resolved in <ref>)` rather than deleting; the history of where the spec wasn't quite right is itself useful.
 
-- (none yet)
+- **DDL nullability is looser than pydantic required-ness for several fields.** Encountered while building [src/db/store.py](src/db/store.py) for Prompt 3. The schema spec in the prompt declared `sites.region`, `sites.portfolio_id`, `meters.landlord_or_tenant`, `readings.currency`, and `audit_entries.bill_external_ref` as nullable (`TEXT` without `NOT NULL`), but the corresponding pydantic models in [src/models/entities.py](src/models/entities.py) and [src/models/audit.py](src/models/audit.py) require all of these. Resolution chosen without surfacing because the asymmetry is benign in practice: stores always populate from the strict pydantic models, so NULL never reaches these columns; if it ever does (direct DB manipulation, or a future code path bypassing the model), the pydantic read-path validates and fails loudly rather than silently coercing. The schema follows the prompt-spec'd DDL exactly; tightening to `NOT NULL` would require an explicit DESIGN.md update. Flagging here so a future reader notices the pattern rather than discovering it via a read-time validation error.
+- **`add_reading(reading: Reading)` has no place for `ingested_at`, `source_mode`, or `batch_id`.** Encountered while building [src/db/store.py](src/db/store.py) for Prompt 3. The Prompt 3 signature is exactly `add_reading(reading: Reading) -> int`, but the readings table per DESIGN.md §4 has three additional columns describing how the reading entered the system. Resolution: the public signature still accepts a Reading as its only positional argument, with `source_mode`, `batch_id`, and `ingested_at` accepted as keyword-only with safe defaults (`source_mode="FIXTURE"`, `batch_id=None`, `ingested_at=datetime.now(UTC)`). Pipeline writes will pass these explicitly when the ingestion handler is built in Phase 2; fixture seeding gets the defaults.

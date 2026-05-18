@@ -31,7 +31,7 @@ The walkthrough audience is Matt Richardson, who owns Measurabl's back-office fu
 
 ## Current state
 
-Phase 1 — Foundation. Bootstrap and pydantic data models complete.
+Phase 1 — Foundation. Models and persistence layer complete; fixtures next.
 
 What exists:
 
@@ -39,20 +39,22 @@ What exists:
 - [DESIGN.md](DESIGN.md) — authoritative spec
 - [README.md](README.md) — skeleton with architecture diagram placeholder, quick start, walkthrough placeholder, status
 - [CLAUDE.md](CLAUDE.md) — this file
-- [DECISIONS.md](DECISIONS.md) — initialized with ADR-001 through ADR-006
+- [DECISIONS.md](DECISIONS.md) — initialized with ADR-001 through ADR-007
 - [TASKS.md](TASKS.md) — Phase 2–4 backlog
 - pydantic v2 data models under `src/models/` (see Models below)
+- SQLite schema and stores under `src/db/` (see Persistence below)
 - `tests/test_models.py` — 12 tests covering instantiation, enum/format validation, serialization roundtrip, and the deferred cross-field check per ADR-006
+- `tests/test_store.py` — 7 tests covering CRUD round-trip per entity, three-key meter lookup, prior-readings ordering and limit, audit-log JSON payload round-trip, and schema idempotency
 - `scripts/check_design_sync.py` + `tests/test_design_sync.py` — structural drift guard that parses DESIGN.md §8 at runtime and fails if any ≥12-word contiguous block from §8 also appears in CLAUDE.md (normalized comparison)
 
 What does **not** yet exist:
 
-- Any SQLite schema, store implementations, or fixtures
+- Fixture seed data
 - Any service code (normalization, reconciliation, validation, triage, drafter, audit, output)
 - Any route handlers (`/bills`, `/batches`)
 - Any sample bills or scenarios
 
-The next unit of work is the rest of Phase 1 (SQLite schema, stores, fixtures) per [TASKS.md](TASKS.md) and [DESIGN.md](DESIGN.md) §6 Phase 1.
+The next unit of work is fixture seed data (3 sites, 5 accounts, 8 meters, 30+ readings) to close out Phase 1.
 
 ### Models
 
@@ -62,6 +64,13 @@ The pydantic models are the contracts every downstream stage and the audit log c
 - [src/models/bill.py](src/models/bill.py) — pipeline-stage artifacts modeled by inheritance: `RawBillInput` → `NormalizedBill` → `ReconciledBill` → `ValidatedBill`. Each stage adds fields without replacing prior ones. Plus the `SourceMode` enum.
 - [src/models/quality.py](src/models/quality.py) — `QualityFlag` and `TriageDecision`, plus the enums `Severity`, `FlagType`, `RoutingKey`, `TriageRoute`.
 - [src/models/audit.py](src/models/audit.py) — `AuditEntry`, the full lineage record persisted per bill.
+
+### Persistence
+
+Two SQLite-backed stores share one DB file. Stdlib `sqlite3` only, no ORM (see ADR-007).
+
+- [src/db/schema.sql](src/db/schema.sql) — DDL for `sites`, `accounts`, `meters`, `readings`, `audit_entries`. Dates and datetimes are ISO 8601 TEXT; booleans are INTEGER 0/1. All CREATE statements use `IF NOT EXISTS` so the schema is idempotent. Indexes: `readings(meter_id, period_end)` for reconciliation lookups, plus `batch_id` and `bill_external_ref` on `audit_entries`.
+- [src/db/store.py](src/db/store.py) — `MeterHistoryStore` (sites/accounts/meters/readings, plus the three-key `find_meter` reconciliation lookup and `get_prior_readings`) and `AuditLogStore` (record / query by bill_external_ref / query by batch_id). Each store owns its own connection with `PRAGMA foreign_keys = ON`; writes commit explicitly. Pydantic models in and out; SQL stays inside this module. The AuditEntry payload round-trips through a single `payload_json` column with a few denormalized columns alongside for query speed.
 
 ## File structure (as it stands)
 
@@ -82,12 +91,16 @@ utility-bill-pipeline/
       bill.py
       quality.py
       audit.py
-    db/__init__.py
+    db/
+      __init__.py
+      schema.sql
+      store.py
     services/__init__.py
     routes/__init__.py
   tests/
     __init__.py
     test_models.py
+    test_store.py
     test_design_sync.py
   scripts/
     check_design_sync.py
