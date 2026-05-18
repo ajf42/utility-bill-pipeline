@@ -31,7 +31,7 @@ The walkthrough audience is Matt Richardson, who owns Measurabl's back-office fu
 
 ## Current state
 
-**Phase 1 — Foundation: complete.** The repo holds the methodology layer, the pydantic contracts, the SQLite persistence layer, and the fixture seed data needed for Phase 2's reconciliation work. Phase 2 starts at `POST /bills` and the JSON-row ingestion handler.
+**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: in progress.** The repo holds the methodology layer, the pydantic contracts, the SQLite persistence layer, the fixture seed data, and the reference data layer (provider library, unit conversion, regional rules). Next up: FastAPI scaffolding and the `POST /bills` endpoint.
 
 What exists:
 
@@ -47,13 +47,14 @@ What exists:
 - `tests/test_models.py` — 12 tests covering instantiation, enum/format validation, serialization roundtrip, and the deferred cross-field check per ADR-006
 - `tests/test_store.py` — 7 tests covering CRUD round-trip per entity, three-key meter lookup, prior-readings ordering and limit, audit-log JSON payload round-trip, and schema idempotency
 - `tests/test_fixtures.py` — 4 tests covering fixture counts, meter resolution, the Liberty main gap-scenario seed, and end-to-end round-trip via pydantic
+- Reference data layer under `src/services/reference.py` (see Reference layer below)
+- `tests/test_reference.py` — 15 tests covering module load, provider library contract, alias + case-insensitive canonicalization, unit conversion (direct, inverse, identity, incompatible-unit failure), and regional rules
 - `scripts/check_design_sync.py` + `tests/test_design_sync.py` — structural drift guard that parses DESIGN.md §8 at runtime and fails if any ≥12-word contiguous block from §8 also appears in CLAUDE.md (normalized comparison)
 
 What does **not** yet exist (Phase 2+):
 
-- Service code (normalization, reconciliation, validation, triage, drafter, audit, output)
+- Remaining service code (normalization, reconciliation, validation, triage, drafter, audit, output)
 - Route handlers (`/bills`, `/batches`)
-- Reference data layer (10 providers + unit conversion)
 - Sample scenarios in `samples/scenarios.md`
 
 The next unit of work is Phase 2: FastAPI scaffolding and the `POST /bills` endpoint, then the JSON-row ingestion handler. See [TASKS.md](TASKS.md) Phase 2 for the full ordered list.
@@ -81,6 +82,12 @@ Hand-written seed data lives in code, not JSON files — single source of truth,
 - [src/db/fixtures.py](src/db/fixtures.py) — `seed_fixtures(store: MeterHistoryStore) -> dict[str, int]` populates the DB. Three sites (Liberty Tower / US, Pacific Plaza / US, Thames Court / EU); five accounts spanning CONNECT, BILL_UPLOAD, and MANUAL source modes plus a generation_account=True on Thames Court for the solar case; eight meters covering electric (kWh), gas (therms), water (HCF), and the solar-export generation case (kWh); 34 monthly readings — four recent months per meter, with two additional older readings on the Liberty Tower main electric meter to seed the Phase 3 gap-detection scenario. Realistic provider names (ConEd, National Grid, PG&E, EBMUD, Octopus Energy), synthetic account numbers.
 - [src/db/seed.py](src/db/seed.py) — CLI: `python -m src.db.seed [--db-path ./prototype.db]`. Idempotent — exits without writing if any sites row already exists.
 
+### Reference layer
+
+In-memory, no DB and no FastAPI deps. Downstream services (normalization, validation) import the constants and helpers directly.
+
+- [src/services/reference.py](src/services/reference.py) — `Provider` and `RegionalRules` pydantic models plus the `ReferenceRegion` enum (`US-East`, `US-West`, `EU`). Module-level constants: `PROVIDERS` (10 entries: ConEd, National Grid, Duke Energy, PG&E, SoCal Edison, Xcel Energy, Pacific Gas, British Gas, Thames Water, EDF Energy), `_CONVERSIONS` (direct-pair table covering energy/gas-energy cross-fuel and pure-volume conversions with source-cited factors), and `REGIONAL_RULES`. Functions: `canonicalize_provider` (case-insensitive, whitespace-normalized, alias-aware), `is_known_provider`, `convert_unit` (direct lookup, falls back to reciprocal of the reverse pair, raises `ValueError` on incompatible units), `get_regional_rules`. Provider lookup is backed by a precomputed normalized index built at import time.
+
 ## File structure (as it stands)
 
 ```
@@ -106,13 +113,16 @@ utility-bill-pipeline/
       store.py
       fixtures.py
       seed.py
-    services/__init__.py
+    services/
+      __init__.py
+      reference.py
     routes/__init__.py
   tests/
     __init__.py
     test_models.py
     test_store.py
     test_fixtures.py
+    test_reference.py
     test_design_sync.py
   scripts/
     check_design_sync.py

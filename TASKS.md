@@ -21,7 +21,7 @@ Phase 1 sub-items from [DESIGN.md](DESIGN.md) §6, with done items checked.
 - [x] pydantic data models (`RawBillInput`, `NormalizedBill`, `ReconciledBill`, `ValidatedBill`, `TriageDecision`, `AuditEntry`, `QualityFlag`, `RoutingKey`) — commit `ad86a2f`
 - [x] SQLite schema (DDL file) — commit `e6f2527`
 - [x] Store implementations (MeterHistoryStore, AuditLogStore) — commit `e6f2527`
-- [x] Fixture data: 3 sites, 5 accounts, 8 meters, 30+ historical readings — commit `db: seed fixture data for 3 sites, 5 accounts, 8 meters, 32+ readings` (lookup via `git log --grep`; this commit's own hash cannot be embedded into itself — will be backfilled in the next commit)
+- [x] Fixture data: 3 sites, 5 accounts, 8 meters, 30+ historical readings — commit `0c7b548`
 
 ## Phase 2 — Single-Row Pipeline
 
@@ -29,7 +29,7 @@ Verbatim from [DESIGN.md](DESIGN.md) §6.
 
 - [ ] FastAPI scaffolding, `POST /bills` endpoint — commit `________`
 - [ ] JSON-row ingestion handler — commit `________`
-- [ ] Reference data layer with 10 providers + unit conversion — commit `________`
+- [x] Reference data layer with 10 providers + unit conversion — commit `services: add reference data layer with providers, units, regional rules` (lookup via `git log --grep`; this commit's own hash cannot be embedded into itself — will be backfilled in the next commit)
 - [ ] Normalization service with structural quality signals — commit `________`
 - [ ] Reconciliation service consulting the store — commit `________`
 - [ ] Schema validation — commit `________`
