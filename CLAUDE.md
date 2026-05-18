@@ -31,7 +31,7 @@ The walkthrough audience is Matt Richardson, who owns Measurabl's back-office fu
 
 ## Current state
 
-**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: in progress.** The repo holds the methodology layer, the pydantic contracts, the SQLite persistence layer, the fixture seed data, and the reference data layer (provider library, unit conversion, regional rules). Next up: FastAPI scaffolding and the `POST /bills` endpoint.
+**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: in progress.** The repo holds the methodology layer, the pydantic contracts, the SQLite persistence layer, the fixture seed data, the reference data layer, the FastAPI app entry, and `POST /bills` with the JSON-row ingestion handler. `POST /bills` currently returns a stub response (`pipeline_status: "ingested_only_not_yet_processed"`) — subsequent prompts wire normalization, reconciliation, validation, and triage. Next up: normalization service.
 
 What exists:
 
@@ -49,12 +49,15 @@ What exists:
 - `tests/test_fixtures.py` — 4 tests covering fixture counts, meter resolution, the Liberty main gap-scenario seed, and end-to-end round-trip via pydantic
 - Reference data layer under `src/services/reference.py` (see Reference layer below)
 - `tests/test_reference.py` — 15 tests covering module load, provider library contract, alias + case-insensitive canonicalization, unit conversion (direct, inverse, identity, incompatible-unit failure), and regional rules
+- FastAPI app entry at `src/main.py`, bills router at `src/routes/bills.py`, ingestion service at `src/services/ingestion.py` (see HTTP surface below)
+- `tests/test_ingestion.py` — 11 tests covering RawBillInput construction, payload copy-not-alias, parametrized missing-field rejection across all seven required fields, optional-field preservation, and non-dict rejection
+- `tests/test_routes_bills.py` — 3 tests (TestClient) covering `GET /health`, the `POST /bills` stub-response shape, and the 422 boundary
 - `scripts/check_design_sync.py` + `tests/test_design_sync.py` — structural drift guard that parses DESIGN.md §8 at runtime and fails if any ≥12-word contiguous block from §8 also appears in CLAUDE.md (normalized comparison)
 
 What does **not** yet exist (Phase 2+):
 
 - Remaining service code (normalization, reconciliation, validation, triage, drafter, audit, output)
-- Route handlers (`/bills`, `/batches`)
+- `POST /batches` route (XLSX batch handler)
 - Sample scenarios in `samples/scenarios.md`
 
 The next unit of work is Phase 2: FastAPI scaffolding and the `POST /bills` endpoint, then the JSON-row ingestion handler. See [TASKS.md](TASKS.md) Phase 2 for the full ordered list.
@@ -88,6 +91,14 @@ In-memory, no DB and no FastAPI deps. Downstream services (normalization, valida
 
 - [src/services/reference.py](src/services/reference.py) — `Provider` and `RegionalRules` pydantic models plus the `ReferenceRegion` enum (`US-East`, `US-West`, `EU`). Module-level constants: `PROVIDERS` (10 entries: ConEd, National Grid, Duke Energy, PG&E, SoCal Edison, Xcel Energy, Pacific Gas, British Gas, Thames Water, EDF Energy), `_CONVERSIONS` (direct-pair table covering energy/gas-energy cross-fuel and pure-volume conversions with source-cited factors), and `REGIONAL_RULES`. Functions: `canonicalize_provider` (case-insensitive, whitespace-normalized, alias-aware), `is_known_provider`, `convert_unit` (direct lookup, falls back to reciprocal of the reverse pair, raises `ValueError` on incompatible units), `get_regional_rules`. Provider lookup is backed by a precomputed normalized index built at import time.
 
+### HTTP surface
+
+FastAPI app, no middleware / auth / CORS. Run locally with `uvicorn src.main:app --reload`.
+
+- [src/main.py](src/main.py) — instantiates `FastAPI(title="Utility Bill Pipeline", version="0.2.0")`, mounts the bills router, exposes `GET /health` returning `{"status": "ok", "version": "0.2.0"}`.
+- [src/routes/bills.py](src/routes/bills.py) — `POST /bills` handler. Accepts a loose `dict` body, delegates to `ingest_json_row`, returns `{"raw_input": <RawBillInput as JSON dict>, "pipeline_status": "ingested_only_not_yet_processed"}`. `ValueError` from the service is mapped to HTTP 422 at the boundary. The stub return is temporary; downstream stages replace it in subsequent prompts.
+- [src/services/ingestion.py](src/services/ingestion.py) — `ingest_json_row(payload: dict) -> RawBillInput`. Validates presence of the seven required fields (`period_start`, `period_end`, `usage`, `usage_units`, `meter_id_string`, `account_number`, `site_name`) and constructs a `RawBillInput` with `source_mode=JSON_ROW` and `batch_id=None`. Field parsing and canonicalization belong to normalization, not here. Payload is shallow-copied so caller mutations don't reach the artifact.
+
 ## File structure (as it stands)
 
 ```
@@ -101,6 +112,7 @@ utility-bill-pipeline/
   .gitignore
   src/
     __init__.py
+    main.py
     models/
       __init__.py
       entities.py
@@ -116,13 +128,18 @@ utility-bill-pipeline/
     services/
       __init__.py
       reference.py
-    routes/__init__.py
+      ingestion.py
+    routes/
+      __init__.py
+      bills.py
   tests/
     __init__.py
     test_models.py
     test_store.py
     test_fixtures.py
     test_reference.py
+    test_ingestion.py
+    test_routes_bills.py
     test_design_sync.py
   scripts/
     check_design_sync.py

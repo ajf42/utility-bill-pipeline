@@ -27,9 +27,9 @@ Phase 1 sub-items from [DESIGN.md](DESIGN.md) §6, with done items checked.
 
 Verbatim from [DESIGN.md](DESIGN.md) §6.
 
-- [ ] FastAPI scaffolding, `POST /bills` endpoint — commit `________`
-- [ ] JSON-row ingestion handler — commit `________`
-- [x] Reference data layer with 10 providers + unit conversion — commit `services: add reference data layer with providers, units, regional rules` (lookup via `git log --grep`; this commit's own hash cannot be embedded into itself — will be backfilled in the next commit)
+- [x] FastAPI scaffolding, `POST /bills` endpoint — commit `routes: add FastAPI scaffolding and POST /bills with JSON-row ingestion` (lookup via `git log --grep`; this commit's own hash cannot be embedded into itself — will be backfilled in the next commit)
+- [x] JSON-row ingestion handler — commit `routes: add FastAPI scaffolding and POST /bills with JSON-row ingestion` (same commit as above per the one-commit-per-task convention; the route handler and the service it delegates to landed together because the route has nothing to test without the service)
+- [x] Reference data layer with 10 providers + unit conversion — commit `3d16ff8`
 - [ ] Normalization service with structural quality signals — commit `________`
 - [ ] Reconciliation service consulting the store — commit `________`
 - [ ] Schema validation — commit `________`
