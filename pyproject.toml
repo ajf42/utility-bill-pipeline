@@ -29,4 +29,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra -m 'not integration'"
+markers = [
+    "integration: tests that call the real Anthropic API; require ANTHROPIC_API_KEY and are excluded by default. Run with `pytest -m integration` to opt in.",
+]

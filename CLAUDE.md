@@ -31,7 +31,7 @@ The walkthrough audience is Matt Richardson, who owns Measurabl's back-office fu
 
 ## Current state
 
-**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: complete.** The repo runs the full single-row pipeline end-to-end through `POST /bills`: ingest → normalize → reconcile → validate. `POST /bills` returns `pipeline_status: "validated"` with `raw_input`, `normalized`, `reconciled`, and `validated` artifacts attached. The e2e acceptance gate ([tests/test_pipeline_e2e.py](tests/test_pipeline_e2e.py)) covers the clean-bill no-HIGH-flags scenario and the dirty-bill UNIT_MISMATCH+GAP scenario against a fixture-seeded DB. Next up: Phase 3 — Triage service with three-route decision logic, Resolution Drafter Service, `POST /batches` XLSX handler, AuditEntry writes, and four sample scenarios in `samples/scenarios.md`.
+**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: complete. Phase 3 — Triage, Drafter, Batch: in progress.** The repo runs the full single-row pipeline end-to-end through `POST /bills`: ingest → normalize → reconcile → validate. The Resolution Drafter Service exists as a standalone unit and is **not yet wired into the pipeline** — that wiring lands with the Triage service in the next Phase 3 prompt. `POST /bills` returns `pipeline_status: "validated"` with `raw_input`, `normalized`, `reconciled`, and `validated` artifacts attached. The e2e acceptance gate ([tests/test_pipeline_e2e.py](tests/test_pipeline_e2e.py)) covers the clean-bill no-HIGH-flags scenario and the dirty-bill UNIT_MISMATCH+GAP scenario against a fixture-seeded DB. Next up in Phase 3: Triage service (three-route decision logic, calls the Drafter on DraftForHumanReview), `POST /batches` XLSX handler, AuditEntry writes, and four sample scenarios in `samples/scenarios.md`.
 
 What exists:
 
@@ -39,7 +39,7 @@ What exists:
 - [DESIGN.md](DESIGN.md) — authoritative spec
 - [README.md](README.md) — skeleton with architecture diagram placeholder, quick start, walkthrough placeholder, status
 - [CLAUDE.md](CLAUDE.md) — this file
-- [DECISIONS.md](DECISIONS.md) — ADR-001 through ADR-008 plus a Spec gaps observed section
+- [DECISIONS.md](DECISIONS.md) — ADR-001 through ADR-011 plus a Spec gaps observed section
 - [TASKS.md](TASKS.md) — Phase 2–4 backlog; Phase 1 marked complete with commit references
 - pydantic v2 data models under `src/models/` (see Models below)
 - SQLite schema and stores under `src/db/` (see Persistence below)
@@ -57,14 +57,15 @@ What exists:
 - `tests/test_pipeline_e2e.py` — Phase 2 acceptance gate: 2 tests through the live FastAPI route against a fixture-seeded tmp DB. Clean bill → no HIGH-severity flags; dirty bill (therms on a kWh meter, 14-day gap) → UNIT_MISMATCH HIGH + GAP HIGH.
 - `tests/test_routes_bills.py` — 3 tests (TestClient) covering `GET /health`, the `POST /bills` validated-response shape with a METER_UNASSIGNED flag against the empty-store override, and the 422 boundary
 - `scripts/check_design_sync.py` + `tests/test_design_sync.py` — structural drift guard that parses DESIGN.md §8 at runtime and fails if any ≥12-word contiguous block from §8 also appears in CLAUDE.md (normalized comparison)
+- `src/models/drafter.py`, `src/prompts/drafter_system.md`, `src/services/drafter.py`, `tests/fakes.py`, `tests/test_drafter.py` — the standalone Resolution Drafter Service (see Drafter below). **Not yet wired into the pipeline.**
 
 What does **not** yet exist (Phase 3+):
 
-- Triage service (three-route decision logic), Resolution Drafter Service (single Claude call), audit-log writer, output writer
+- Triage service (three-route decision logic), audit-log writer, output writer
 - `POST /batches` route (XLSX batch handler)
 - Sample scenarios in `samples/scenarios.md`
 
-The next unit of work is Phase 2: FastAPI scaffolding and the `POST /bills` endpoint, then the JSON-row ingestion handler. See [TASKS.md](TASKS.md) Phase 2 for the full ordered list.
+The next unit of work is the Triage service, which calls the Drafter on the DraftForHumanReview route. See [TASKS.md](TASKS.md) Phase 3 for the full ordered list.
 
 ### Models
 
@@ -74,6 +75,7 @@ The pydantic models are the contracts every downstream stage and the audit log c
 - [src/models/bill.py](src/models/bill.py) — pipeline-stage artifacts modeled by inheritance: `RawBillInput` → `NormalizedBill` → `ReconciledBill` → `ValidatedBill`. Each stage adds fields without replacing prior ones. Plus the `SourceMode` enum.
 - [src/models/quality.py](src/models/quality.py) — `QualityFlag` and `TriageDecision`, plus the enums `Severity`, `FlagType`, `RoutingKey`, `TriageRoute`.
 - [src/models/audit.py](src/models/audit.py) — `AuditEntry`, the full lineage record persisted per bill.
+- [src/models/drafter.py](src/models/drafter.py) — `DrafterOutput` plus the enums `ProposedAction` and `EmailRecipientType`. The output contract for the Resolution Drafter Service; fields cover `proposed_action`, `proposed_correction` (machine-applicable partial override, empty when human input is required first), the drafted email triple (`subject`, `body`, `recipient_type`), `basis_note`, and `confidence_note` (required — uses the literal "no uncertainty noted" when none).
 
 ### Persistence
 
@@ -107,6 +109,15 @@ FastAPI app, no middleware / auth / CORS. Run locally with `uvicorn src.main:app
 - [src/services/reconciliation.py](src/services/reconciliation.py) — `reconcile(normalized: NormalizedBill, store: MeterHistoryStore, *, prior_readings_limit: int = 12) -> ReconciledBill`. Resolves the three-key triple (`meter_id_string`, `account_number`, `site_name`) against the store; on hit, fetches the last N prior readings and the parent account (via `store.get_account`) and computes `prior_context = {prior_period_end, count_of_prior_readings}`; on miss, returns a `ReconciledBill` with `matched_meter=None`, `matched_account=None`, `prior_readings=[]`, and zeroed prior_context. Never raises on miss — the "no match" case is a valid pipeline outcome that triggers `meter_unassigned` escalation downstream. Stateless beyond the injected store; does not open connections itself. The default 12 is `DEFAULT_PRIOR_READINGS_LIMIT` at module scope.
 - [src/services/validation.py](src/services/validation.py) — `validate(reconciled: ReconciledBill) -> ValidatedBill`. Runs schema checks (period_start strictly before period_end → `FORMAT_INVALID`), structural checks against `matched_meter` (`UNIT_MISMATCH`, `CURRENCY_MISMATCH`, `INACTIVE_METER`), structural checks against `matched_account` (`GENERATION_MISMATCH` for `energy_exported > 0` on a non-generation account), and the two domain heuristics with prior context (`GAP`: ≤2 days no flag / 2–7 days MEDIUM / >7 days HIGH; `OVERLAP`: any prior-period intersection HIGH). When `matched_meter` is None, emits exactly one HIGH `METER_UNASSIGNED` flag (plus any schema-level format issues); all matched-meter / matched-account / prior-context checks short-circuit naturally. Never raises. Thresholds (`_GAP_MEDIUM_DAYS=2`, `_GAP_HIGH_DAYS=7`) are module-level constants. The `name_mismatch` check from DESIGN.md §4 is intentionally omitted — strict three-key `find_meter` makes a site-name disagreement an unmatched-meter case, so the check is unreachable; see DECISIONS.md "Spec gaps observed".
 
+### Drafter
+
+Standalone (not yet wired into the pipeline). Triage will call this on the DraftForHumanReview route in the next Phase 3 prompt.
+
+- [src/services/drafter.py](src/services/drafter.py) — `DrafterService(client, model="claude-sonnet-4-6", system_prompt_path, max_tokens=1024)`. Single public method `draft(validated_bill, meter, prior_readings) -> DrafterOutput`. Forces structured output via Anthropic's tool-use mechanism (see ADR-010): tool name `draft_resolution`, `input_schema` derived from `DrafterOutput.model_json_schema()`, `tool_choice={"type": "tool", "name": "draft_resolution"}`. Parses the `tool_use` block on response; any parse failure (no tool_use, non-dict input, pydantic validation error) raises `DrafterParseError` with the raw response attached — fail-loud per ADR-011, no retries. Module-level helper `build_drafter_user_message(bill, meter, history)` renders the structured user message with section headers (Incoming bill / Matched meter / Quality flags / Recent readings).
+- [src/prompts/drafter_system.md](src/prompts/drafter_system.md) — the drafter's system prompt as a standalone markdown file (see ADR-009 for the in-file rationale). Frames the model as a drafting assistant, names the human as the gate, instructs the model to leave `proposed_correction` empty when it cannot safely self-correct, includes two short example outputs (unit-mismatch and meter-confusion), and ends with the literal "Always call the draft_resolution tool. Never respond outside it." Read at `DrafterService` construction time.
+- [tests/fakes.py](tests/fakes.py) — `FakeAnthropicClient` plus `FakeMessage` / `FakeContentBlock` dataclasses. Mirrors the real SDK's `messages.create(...) -> Message` shape: `Message.content` is a list of blocks where a tool_use block exposes `.type == "tool_use"`, `.name`, and `.input` (dict). Configure with `set_next_response(...)`; the client records the last call's kwargs on `last_call_kwargs` so tests can assert tool-choice was forced.
+- [tests/test_drafter.py](tests/test_drafter.py) — 7 tests across three tiers. Tier 1 (contract): DrafterOutput round-trip; `model_json_schema()` exposes the expected properties. Tier 2 (behavior): canned tool_use → parsed DrafterOutput; invalid enum in tool input → DrafterParseError; text-only response (no tool_use) → DrafterParseError; `build_drafter_user_message` includes the meter's locked unit, the meter_id_string, and the specific flag. Tier 4 (integration): one `@pytest.mark.integration` test against the real Anthropic API, skipped when `ANTHROPIC_API_KEY` is not set. Default `pytest` runs deselect the integration mark via `pyproject.toml` `addopts`.
+
 ## File structure (as it stands)
 
 ```
@@ -127,6 +138,7 @@ utility-bill-pipeline/
       bill.py
       quality.py
       audit.py
+      drafter.py
     db/
       __init__.py
       schema.sql
@@ -140,12 +152,16 @@ utility-bill-pipeline/
       normalization.py
       reconciliation.py
       validation.py
+      drafter.py
     routes/
       __init__.py
       bills.py
       dependencies.py
+    prompts/
+      drafter_system.md
   tests/
     __init__.py
+    fakes.py
     test_models.py
     test_store.py
     test_fixtures.py
@@ -156,6 +172,7 @@ utility-bill-pipeline/
     test_validation.py
     test_pipeline_e2e.py
     test_routes_bills.py
+    test_drafter.py
     test_design_sync.py
   scripts/
     check_design_sync.py

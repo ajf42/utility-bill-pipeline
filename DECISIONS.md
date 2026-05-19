@@ -132,6 +132,48 @@ A secondary decision under the same heading: how to represent "this check did no
 
 ---
 
+## ADR-009 — Drafter system prompt lives in a markdown file, not in Python
+
+**Status:** Accepted (2026-05-19)
+
+**Context:** The Resolution Drafter is a single Anthropic API call that takes a flagged bill and produces a structured drafted resolution. The system prompt is several hundred words long, contains worked examples, and is the load-bearing document that defines drafter behavior. Three natural places for it: a `str` constant inside [src/services/drafter.py](src/services/drafter.py), a `.py` module under `src/prompts/`, or a standalone markdown file under `src/prompts/`. The audience considerations from [ADR-005](#adr-005--entity-model-aligned-to-measurabls-published-hierarchy) apply — Matt reads the prompt as part of the walkthrough and judges whether the AI is genuinely glass-box.
+
+Alternatives considered: prompt as a Python `str` triple-quoted constant (rejected — long prose embedded in a code file reads worse on review, and editing it triggers a code change for what is really a content change); prompt as a Python module exporting a constant (rejected — same downside, plus implies it should be importable as Python rather than read by reviewers).
+
+**Decision:** The drafter's system prompt lives in [src/prompts/drafter_system.md](src/prompts/drafter_system.md) as plain markdown. `DrafterService.__init__` reads it from disk at construction time and holds the resulting string for the lifetime of the service. The path is overridable via the `system_prompt_path` constructor argument so tests can swap in a fixture prompt if needed.
+
+**Consequences:** A reviewer reads the prompt the same way they read any other piece of methodology in the repo — as a markdown document with headers and examples, rendered by GitHub. Editing the prompt is a content change, not a code change, and shows up cleanly in `git diff`. The cost is one extra file read at service construction; negligible. The pattern generalizes if more Claude-backed services are added later — they each get their own `.md` under `src/prompts/`.
+
+---
+
+## ADR-010 — Drafter uses Anthropic tool-use to force structured output
+
+**Status:** Accepted (2026-05-19)
+
+**Context:** The drafter must return a structured object the pipeline can store in the audit log and (on approval) apply as a partial field override. There are three real ways to coerce structure out of a Claude call: ask for JSON in the prompt and parse the text, use the SDK's response_format-style JSON mode if applicable, or use tool-use with the schema defined as a tool's `input_schema` and force the model to call that tool. Each has tradeoffs in robustness, schema enforceability, and audit-log shape.
+
+Alternatives considered: free-form text + "respond as JSON" instructions + manual parse (rejected — model occasionally wraps JSON in prose or markdown fences, requiring brittle post-processing; no schema enforcement on the model side); JSON-mode (text response constrained to valid JSON, no schema enforcement) (rejected — still no schema enforcement, and the Anthropic SDK pattern that maps best onto pydantic schemas is tool-use).
+
+**Decision:** Use Anthropic's tool-use mechanism. A single tool named `draft_resolution` is registered with `input_schema` derived from `DrafterOutput.model_json_schema()`. The call sets `tool_choice={"type": "tool", "name": "draft_resolution"}`, forcing the model to invoke the tool rather than respond in free text. The drafter then reads the `tool_use` content block, validates its `.input` payload through `DrafterOutput.model_validate`, and returns the resulting object.
+
+**Consequences:** The schema is enforced by both Anthropic's server (the model is steered toward the declared shape) and pydantic at the boundary (the final `model_validate` is the gate). Adding a field to `DrafterOutput` automatically updates the tool schema — no second place to keep in sync. The system prompt ends with the literal "Always call the draft_resolution tool. Never respond outside it." as belt-and-suspenders. The cost is a slight coupling to the Anthropic tool-use API surface; if we ever wanted provider-portable code, this would need an adapter. That tradeoff is the right one for a glass-box prototype targeted at the Anthropic stack.
+
+---
+
+## ADR-011 — Drafter fails loud on parse errors; no retry, no degraded fallback
+
+**Status:** Accepted (2026-05-19)
+
+**Context:** When the Anthropic call comes back with a response the drafter cannot parse — no `tool_use` block, malformed input, pydantic validation failure — the service has to decide what to do. Three obvious paths: retry once with a softened prompt, fall back to returning a partial / text-only DrafterOutput, or raise immediately and let the caller decide. The audience requirement from [ADR-003](#adr-003--structural-only-confidence-model-no-llm-self-reported-confidence) carries here: Matt's situation is that he is liable for the output and cannot trust silent recovery from AI weirdness.
+
+Alternatives considered: silent retry with a tightened prompt (rejected — masks a real signal that the prompt or schema is drifting from the model's behavior, and turns one bad call into two); construct a degraded DrafterOutput from the text portion of the response with `proposed_action=REQUEST_CLARIFICATION` (rejected — invents fields the model did not produce, which is the exact opposite of glass-box).
+
+**Decision:** Any parse failure raises `DrafterParseError`, with the raw response attached on `.raw_response` so the audit log can record exactly what came back. The drafter does not retry, does not degrade, and does not catch. The triage caller (built in the next Phase 3 prompt) is responsible for deciding what to do — typically: route the bill to Escalate with `routing_key=UNCATEGORIZED`, attach the raw response to the audit entry, and surface the failure to the back-office queue. Retry/backoff for transient network errors is a scale-doc concern, not a prototype one.
+
+**Consequences:** Every drafter failure is visible at the boundary, in the audit log, with the raw response preserved. A prompt drift or schema mismatch shows up the first time it happens, not muffled inside an exponential-backoff loop. The cost is that a single bad API response causes a single bill to escalate — which is exactly the operational behavior Matt's teams need to see, since "Claude did something unexpected" is precisely the moment a human review is warranted.
+
+---
+
 ## Spec gaps observed
 
 Gaps in [DESIGN.md](DESIGN.md) that surfaced during a build step and required either a decision or a clarification before proceeding. Per the ambiguity-handling rule in [CLAUDE.md](CLAUDE.md), inventing on ambiguous spec is forbidden — any gap encountered is logged here, optionally accompanied by a `TODO` in the code at the point of contact.
