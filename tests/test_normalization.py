@@ -10,11 +10,39 @@ end through the JSON boundary.
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
+from src.db.store import MeterHistoryStore
 from src.main import app
 from src.models.bill import NormalizedBill, RawBillInput, SourceMode
+from src.routes.dependencies import get_store
 from src.services.normalization import normalize
+
+
+@pytest.fixture()
+def client(tmp_path) -> TestClient:
+    """TestClient with an empty tmp-path store overriding ``get_store``.
+
+    The normalization tests don't care about meter history, but the route
+    runs reconciliation now, so a store has to be provided. Overriding
+    here keeps these tests from depending on any prototype.db on disk.
+    """
+
+    db_path = tmp_path / "norm-route.db"
+
+    def _override():
+        store = MeterHistoryStore(db_path)
+        try:
+            yield store
+        finally:
+            store.close()
+
+    app.dependency_overrides[get_store] = _override
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_store, None)
 
 
 def _clean_payload() -> dict:
@@ -252,8 +280,7 @@ def test_normalize_does_not_raise_on_completely_busted_payload():
 # ---------------------------------------------------------------------------
 
 
-def test_post_bills_clean_body_shows_all_true_signals():
-    client = TestClient(app)
+def test_post_bills_clean_body_shows_all_true_signals(client: TestClient):
     response = client.post("/bills", json=_clean_payload())
     assert response.status_code == 200
     signals = response.json()["normalized"]["structural_signals"]
@@ -265,8 +292,7 @@ def test_post_bills_clean_body_shows_all_true_signals():
     assert signals["cross_field_agreement"]["unit_matches_provider_typical"] is True
 
 
-def test_post_bills_negative_usage_flags_value_in_range():
-    client = TestClient(app)
+def test_post_bills_negative_usage_flags_value_in_range(client: TestClient):
     payload = _clean_payload()
     payload["usage"] = -100
     response = client.post("/bills", json=payload)

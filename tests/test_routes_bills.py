@@ -1,8 +1,9 @@
 """HTTP-surface tests for /health and POST /bills.
 
-Uses FastAPI's TestClient (httpx). Covers the happy path, the stub-response
-shape (which subsequent prompts replace once the real pipeline is wired),
-and the 422 boundary when a required field is missing.
+Uses FastAPI's TestClient (httpx). Covers the happy path, the response
+shape, and the 422 boundary when a required field is missing. The
+``get_store`` dependency is overridden to an empty tmp-path DB so these
+tests do not depend on (or pollute) any prototype.db on disk.
 """
 
 from __future__ import annotations
@@ -10,12 +11,27 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from src.db.store import MeterHistoryStore
 from src.main import app
+from src.routes.dependencies import get_store
 
 
 @pytest.fixture()
-def client() -> TestClient:
-    return TestClient(app)
+def client(tmp_path) -> TestClient:
+    db_path = tmp_path / "routes.db"
+
+    def _override():
+        store = MeterHistoryStore(db_path)
+        try:
+            yield store
+        finally:
+            store.close()
+
+    app.dependency_overrides[get_store] = _override
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.pop(get_store, None)
 
 
 def _minimum_valid_body() -> dict:
@@ -39,23 +55,28 @@ def test_health_returns_ok_and_version(client: TestClient):
     assert body["version"] == "0.2.0"
 
 
-def test_post_bills_with_valid_body_returns_normalized_response(client: TestClient):
+def test_post_bills_with_valid_body_returns_reconciled_response(client: TestClient):
     body = _minimum_valid_body()
 
     response = client.post("/bills", json=body)
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["pipeline_status"] == "normalized"
+    assert payload["pipeline_status"] == "reconciled"
     raw_input = payload["raw_input"]
     assert raw_input["source_mode"] == "JSON_ROW"
     assert raw_input["batch_id"] is None
     assert raw_input["raw_payload"] == body
-    # Normalization artifact present with the expected sub-shape; the
-    # specifics of the signals are exercised in test_normalization.py.
+    # Normalization and reconciliation artifacts present with the
+    # expected sub-shapes; specifics are exercised in their own modules.
     normalized = payload["normalized"]
     assert "structural_signals" in normalized
     assert "field_type_valid" in normalized["structural_signals"]
+    reconciled = payload["reconciled"]
+    # Empty-store override: no match expected.
+    assert reconciled["matched_meter"] is None
+    assert reconciled["prior_readings"] == []
+    assert reconciled["prior_context"]["count_of_prior_readings"] == 0
 
 
 def test_post_bills_missing_required_field_returns_422(client: TestClient):

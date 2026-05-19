@@ -30,8 +30,8 @@ Verbatim from [DESIGN.md](DESIGN.md) §6.
 - [x] FastAPI scaffolding, `POST /bills` endpoint — commit `2153de0`
 - [x] JSON-row ingestion handler — commit `2153de0` (same commit as above; the route handler and the service it delegates to landed together because the route has nothing to test without the service)
 - [x] Reference data layer with 10 providers + unit conversion — commit `3d16ff8`
-- [x] Normalization service with structural quality signals — commit `services: add normalization service with structural quality signals` (lookup via `git log --grep`; this commit's own hash cannot be embedded into itself — will be backfilled in the next commit)
-- [ ] Reconciliation service consulting the store — commit `________`
+- [x] Normalization service with structural quality signals — commit `9ddfa36`
+- [x] Reconciliation service consulting the store — commit `services: add reconciliation service consulting the meter history store` (lookup via `git log --grep`; this commit's own hash cannot be embedded into itself — will be backfilled in the next commit)
 - [ ] Schema validation — commit `________`
 - [ ] Two domain heuristics (gap, overlap) — commit `________`
 - [ ] Structural checks (unit/currency/name/inactive) — commit `________`
