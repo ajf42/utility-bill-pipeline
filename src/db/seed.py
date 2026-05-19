@@ -47,8 +47,20 @@ def main() -> int:
         type=Path,
         help="Path to the SQLite DB file (default: ./prototype.db).",
     )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help=(
+            "Delete the DB file before seeding so the result is deterministic. "
+            "Used by the demo harness to guarantee a known starting state."
+        ),
+    )
     args = parser.parse_args()
     db_path: Path = args.db_path
+
+    if args.reset and db_path.exists():
+        db_path.unlink()
+        print(f"Reset: removed {db_path}")
 
     if _already_seeded(db_path):
         print(f"Skipping: {db_path} already contains fixture data.")

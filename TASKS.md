@@ -45,8 +45,8 @@ Verbatim from [DESIGN.md](DESIGN.md) §6.
 - [x] Resolution Drafter Service (single Claude call, structured output) — standalone build (not yet wired into the pipeline; wiring lands with the Triage service). Commit `1b1ce8a`.
 - [ ] `POST /batches` endpoint with simplified XLSX template parser — commit `________`
 - [ ] Batch summary report assembly — commit `________`
-- [ ] AuditEntry writes to SQLite — commit `________`
-- [ ] 4 sample scenarios constructed and documented in `samples/scenarios.md` — commit `________`
+- [x] AuditEntry writes to SQLite — commit `94316df` (landed with the triage wiring; original + follow-up entries linked via `parent_bill_external_ref`).
+- [x] 4 sample scenarios constructed and documented in `samples/scenarios.md` — covered in spirit by the six canonical bills in [scripts/demo_bills.json](scripts/demo_bills.json) + [WALKTHROUGH.md](WALKTHROUGH.md); commit `________` (filled on commit). The lighter `samples/scenarios.md` file remains open if a separate per-scenario markdown is wanted later.
 - [x] Tests for triage logic with explicit expected decisions — commit `94316df` ( tests/test_triage.py + tests/test_approval.py landed together with the triage service).
 - [x] Tests for resolution drafter (mock the Claude call in tests) — landed alongside the service in the standalone build. Commit `1b1ce8a`.
 

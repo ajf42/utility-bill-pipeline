@@ -31,7 +31,7 @@ The walkthrough audience is Matt Richardson, who owns Measurabl's back-office fu
 
 ## Current state
 
-**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: complete. Phase 3 — Triage, Drafter, Batch: in progress.** The full single-row pipeline runs end-to-end through `POST /bills`: ingest → normalize → reconcile → validate → triage (with the Resolution Drafter wired in on the DraftForHumanReview route) → audit-log write. `POST /bills` returns `pipeline_status: "triaged"` with `audit_ref`, the per-stage artifacts, and the `TriageDecision` (including `drafter_output` when applicable). The human approval loop is closed: `POST /bills/{audit_ref}/approve` applies the drafter's `proposed_correction`, writes the resulting Reading with `source_mode=DRAFTER_APPROVED`, and records a linked follow-up audit entry; `POST /bills/{audit_ref}/reject` records a rejection with reason. The Anthropic client is constructed once at app startup (lifespan event in [src/main.py](src/main.py)) and injected through `get_drafter`. Next up in Phase 3: `POST /batches` XLSX handler, four sample scenarios in `samples/scenarios.md`.
+**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: complete. Phase 3 — Triage, Drafter, Batch: in progress.** The full single-row pipeline runs end-to-end through `POST /bills`: ingest → normalize → reconcile → validate → triage (with the Resolution Drafter wired in on the DraftForHumanReview route) → audit-log write. The human approval loop is closed via `POST /bills/{audit_ref}/approve` and `POST /bills/{audit_ref}/reject`. A canonical-bill demonstration harness ([scripts/demo.py](scripts/demo.py) + [scripts/demo_bills.json](scripts/demo_bills.json)) walks six curated bills through the live API end-to-end and prints a summary table; [WALKTHROUGH.md](WALKTHROUGH.md) mirrors the same six cases as a standalone portfolio document. Fixtures gained two meters to support demo cases: an inactive ConEd meter (active=False, one historical reading) for the INACTIVE_METER case and an unknown-provider gas meter (`MSR.(GreenfieldCoop)(LT-GAS-002):(M2)`, four monthly readings) for the unknown-provider case — counts are now 3 sites / 5 accounts / 10 meters / 39 readings. Next up in Phase 3: `POST /batches` XLSX handler.
 
 What exists:
 
@@ -62,10 +62,13 @@ What exists:
 - `tests/test_triage.py` — 11 tests covering routing logic (no-flags AutoResolve; one-MEDIUM AutoResolve; HIGH-only-fixable DraftForHumanReview; HIGH-non-fixable Escalate with mapped routing key; 3-MEDIUM Escalate; 2-MEDIUM DraftForHumanReview; unmatched-meter Escalate) plus drafter integration (drafter_output populated; DrafterParseError → DRAFTER_FAILURE; no-drafter warning path).
 - `tests/test_approval.py` — 6 tests including the Phase 3 e2e acceptance gate: ingest → normalize → reconcile → validate → triage (FakeAnthropicClient) → approve → persistence on a synthetic unit-mismatch bill. Plus approve/reject behavior, 404 on unknown audit_ref, 409 on AutoResolve, and the parent_bill_external_ref linkage carrying before/after payloads.
 
+- [scripts/demo.py](scripts/demo.py) + [scripts/demo_bills.json](scripts/demo_bills.json) — the canonical-bill demonstration harness (see Demo harness below).
+- [WALKTHROUGH.md](WALKTHROUGH.md) — case-by-case narrative for the same six bills, suitable for portfolio readers.
+
 What does **not** yet exist (Phase 3+):
 
 - `POST /batches` route (XLSX batch handler) + batch summary report
-- Sample scenarios in `samples/scenarios.md`
+- Sample scenarios in `samples/scenarios.md` (the demo harness + WALKTHROUGH.md cover the demonstrable scenarios; `samples/scenarios.md` is the lighter-weight TASKS.md item that remains open)
 
 The next unit of work is the XLSX batch handler. See [TASKS.md](TASKS.md) Phase 3 for the full ordered list.
 
@@ -89,10 +92,10 @@ Two SQLite-backed stores share one DB file. Stdlib `sqlite3` only, no ORM (see A
 
 ### Fixtures
 
-Hand-written seed data lives in code, not JSON files — single source of truth, visible in one place. Counts: 3 sites, 5 accounts, 8 meters, 34 readings.
+Hand-written seed data lives in code, not JSON files — single source of truth, visible in one place. Counts: 3 sites, 5 accounts, 10 meters, 39 readings.
 
-- [src/db/fixtures.py](src/db/fixtures.py) — `seed_fixtures(store: MeterHistoryStore) -> dict[str, int]` populates the DB. Three sites (Liberty Tower / US, Pacific Plaza / US, Thames Court / EU); five accounts spanning CONNECT, BILL_UPLOAD, and MANUAL source modes plus a generation_account=True on Thames Court for the solar case; eight meters covering electric (kWh), gas (therms), water (HCF), and the solar-export generation case (kWh); 34 monthly readings — four recent months per meter, with two additional older readings on the Liberty Tower main electric meter to seed the Phase 3 gap-detection scenario. Realistic provider names (ConEd, National Grid, PG&E, EBMUD, Octopus Energy), synthetic account numbers.
-- [src/db/seed.py](src/db/seed.py) — CLI: `python -m src.db.seed [--db-path ./prototype.db]`. Idempotent — exits without writing if any sites row already exists.
+- [src/db/fixtures.py](src/db/fixtures.py) — `seed_fixtures(store: MeterHistoryStore) -> dict[str, int]` populates the DB. Three sites (Liberty Tower / US, Pacific Plaza / US, Thames Court / EU); five accounts spanning CONNECT, BILL_UPLOAD, and MANUAL source modes plus a generation_account=True on Thames Court for the solar case; ten meters covering electric (kWh), gas (therms), water (HCF), and the solar-export generation case (kWh) — plus two demo-specific meters: an **inactive** ConEd meter (`MSR.(ConEd)(LT-ELEC-001):(OLD-M0)`, `active=False`, single 2024-06 reading) for the INACTIVE_METER canonical case, and an **unknown-provider** gas meter (`MSR.(GreenfieldCoop)(LT-GAS-002):(M2)`, four monthly readings, provider not in the reference library) for the unknown-provider canonical case. 39 readings total — four recent months on each of the eight baseline meters, two additional older readings on the Liberty Tower main electric meter to seed the Phase 2 gap-detection scenario, one old reading on the inactive meter, and four monthly readings on the unknown-provider meter. Realistic provider names (ConEd, National Grid, PG&E, EBMUD, Octopus Energy), synthetic account numbers. The `_MeterSpec` dataclass carries an `active: bool = True` field so meters that need `active=False` opt in by spec.
+- [src/db/seed.py](src/db/seed.py) — CLI: `python -m src.db.seed [--db-path ./prototype.db] [--reset]`. Idempotent — exits without writing if any sites row already exists. `--reset` deletes the DB file first; used by the demo harness to guarantee a known starting state.
 
 ### Reference layer
 
@@ -115,6 +118,14 @@ FastAPI app, no middleware / auth / CORS. Run locally with `uvicorn src.main:app
 ### Triage
 
 - [src/services/triage.py](src/services/triage.py) — `TriageService(drafter: DrafterService | None = None)` with a single public method `triage(validated: ValidatedBill) -> TriageDecision`. Routes per DESIGN.md §4: unmatched meter → Escalate(METER_UNASSIGNED); any HIGH flag → Escalate (routing key picked from the first HIGH via `_HIGH_FLAG_TO_ROUTING_KEY`, fallback UNCATEGORIZED) UNLESS every HIGH flag is in `_FIXABLE_HIGH_FLAG_TYPES = {UNIT_MISMATCH}` in which case → DraftForHumanReview; ≥3 MEDIUM → Escalate(UNCATEGORIZED); 2 MEDIUM → DraftForHumanReview; else → AutoResolve. On the DraftForHumanReview route, calls `drafter.draft(validated, meter, prior_readings)` if a drafter is attached; any exception (notably `DrafterParseError`) is caught, the route degrades to Escalate(DRAFTER_FAILURE), and a `FlagType.DRAFTER_FAILURE` flag carrying the exception type and message is appended to `validated.flags` (mutation of the pipeline's in-memory artifact, so the audit log preserves the failure mode). When `drafter is None` on a draft route, returns `drafter_output=None` and emits a logger warning — a test-friendly mode, not a production one.
+
+### Demo harness
+
+Terminal-based demonstration runner that walks six canonical bills through the live API. Runs against the real Anthropic API on DraftForHumanReview cases; the demo harness itself does not call the API directly — it POSTs to the running uvicorn process and the in-app DrafterService is what calls Anthropic.
+
+- [scripts/demo_bills.json](scripts/demo_bills.json) — six curated bills as JSON (data, not code, so other harnesses can re-use the set). Each entry: `{label, narrative, bill}`. Cases: (1) baseline clean → AutoResolve; (2) `ccf` on a kWh meter → DraftForHumanReview (UNIT_MISMATCH); (3) gap on Liberty M2 (~62 days) → Escalate(UNCATEGORIZED — see spec gap on `gap` routing key in DECISIONS.md); (4) overlap on Pacific Plaza M1 → Escalate(OVERLAP); (5) unknown provider + unit mismatch on the GreenfieldCoop gas meter → DraftForHumanReview (UNIT_MISMATCH, drafter sees `provider_known=False` in context); (6) bill against the inactive ConEd meter → Escalate(INACTIVE_METER).
+- [scripts/demo.py](scripts/demo.py) — `python scripts/demo.py {--auto-approve | --interactive}` (mutually exclusive, exactly one required). Resets the DB via `python -m src.db.seed --reset` at the start, checks `/health` (clear error and abort if uvicorn isn't running), POSTs each bill to `/bills`, narrates the route / flags / drafter output (`basis_note`, email subject, confidence_note, body — pretty-printed, not raw JSON), and acts on DraftForHumanReview cases: auto-approve hits `/bills/{audit_ref}/approve` automatically; interactive prompts `[A]pprove / [R]eject / [S]kip` with Enter defaulting to Approve. Closes with a summary table (number, label, route, flag count, outcome, audit_ref prefix). Base URL is a module-level `BASE_URL = "http://localhost:8000"` constant. Reads `ANTHROPIC_API_KEY` indirectly — only the uvicorn process needs it set.
+- [WALKTHROUGH.md](WALKTHROUGH.md) — narrative companion for the same six cases. Captured (illustrative) drafter outputs for cases 2 and 5; structured fields are deterministic, natural-language fields vary between runs. Closes with a summary table and a "What this demo is not" paragraph pointing readers at the scale-to-production doc.
 
 ### Drafter
 
@@ -186,8 +197,11 @@ utility-bill-pipeline/
     test_design_sync.py
   scripts/
     check_design_sync.py
+    demo.py
+    demo_bills.json
   samples/__init__.py
   docs/__init__.py
+  WALKTHROUGH.md
 ```
 
 The full target structure (what this skeleton grows into) is enumerated in [DESIGN.md](DESIGN.md) §10.

@@ -22,11 +22,13 @@ def test_seed_fixtures_produces_expected_counts(store):
     counts = seed_fixtures(store)
     assert counts["sites"] == 3
     assert counts["accounts"] == 5
-    assert counts["meters"] == 8
+    assert counts["meters"] == 10
     assert counts["readings"] >= 30
-    # The exact reading count is 8 meters * 4 recent + 2 older on Liberty main
-    # electric = 34. Pin it so accidental shrinkage of fixtures is loud.
-    assert counts["readings"] == 34
+    # 8 baseline meters * 4 recent + 2 older on Liberty main electric
+    # = 34, plus the inactive meter (1 old reading) and the
+    # unknown-provider gas meter (4 monthly readings) added for the demo
+    # canonical bills 5 and 6 = 39 total.
+    assert counts["readings"] == 39
 
 
 def test_find_meter_resolves_liberty_main_electric(store):

@@ -49,6 +49,7 @@ class _MeterSpec:
     currency: str
     type: MeterType
     landlord_or_tenant: LandlordOrTenant
+    active: bool = True
 
 
 _SITES: list[Site] = [
@@ -108,6 +109,23 @@ _METERS: list[_MeterSpec] = [
         "MSR.(OctopusEnergy)(TC-ELEC-001):(M2)",
         Unit.KWH, "GBP", MeterType.ELECTRIC, LandlordOrTenant.LANDLORD,
     ),
+    # Inactive meter — exists in the store but is marked active=False.
+    # Bills against this meter fire the INACTIVE_METER flag in validation.
+    # Demo case 6 ("inactive meter") targets this row.
+    _MeterSpec(
+        "LT-ELEC-001",
+        "MSR.(ConEd)(LT-ELEC-001):(OLD-M0)",
+        Unit.KWH, "USD", MeterType.ELECTRIC, LandlordOrTenant.LANDLORD,
+        active=False,
+    ),
+    # Unknown-provider meter — provider alias 'GreenfieldCoop' is not in
+    # the reference library. Bills against this meter expose the
+    # `provider_known=False` structural signal. Demo case 5 routes here.
+    _MeterSpec(
+        "LT-GAS-002",
+        "MSR.(GreenfieldCoop)(LT-GAS-002):(M2)",
+        Unit.THERMS, "USD", MeterType.GAS, LandlordOrTenant.LANDLORD,
+    ),
 ]
 
 
@@ -165,6 +183,20 @@ _READINGS_BY_METER: dict[str, list[tuple[int, int, float, float | None]]] = {
         (2026, 3, 4800.0, None),
         (2026, 4, 5600.0, None),
     ],
+    # Inactive meter carries one old reading so the row is realistic;
+    # the active=False flag is what drives the INACTIVE_METER demo case.
+    "MSR.(ConEd)(LT-ELEC-001):(OLD-M0)": [
+        (2024, 6, 28900.0, 3468.0),
+    ],
+    # Unknown-provider gas meter — four monthly readings so the meter is
+    # reconciliation-resolvable and the demo bill exercises the
+    # provider_known=False structural signal cleanly.
+    "MSR.(GreenfieldCoop)(LT-GAS-002):(M2)": [
+        (2026, 1, 1800.0, 2340.0),
+        (2026, 2, 1620.0, 2106.0),
+        (2026, 3, 1200.0, 1560.0),
+        (2026, 4, 720.0, 936.0),
+    ],
 }
 
 
@@ -205,7 +237,7 @@ def seed_fixtures(store: MeterHistoryStore) -> dict[str, int]:
             currency=spec.currency,
             type=spec.type,
             landlord_or_tenant=spec.landlord_or_tenant,
-            active=True,
+            active=spec.active,
             start_date=date(2024, 1, 1),
         )
         meter_id = store.add_meter(meter)

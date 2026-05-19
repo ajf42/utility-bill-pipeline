@@ -1,0 +1,92 @@
+[
+    {
+        "label": "Bill 1 - Baseline clean",
+        "narrative": "Happy path: a normal monthly bill on a known meter; routes straight to AutoResolve.",
+        "bill": {
+            "period_start": "2026-05-01",
+            "period_end": "2026-05-31",
+            "usage": 30100,
+            "usage_units": "kWh",
+            "currency": "USD",
+            "cost": 3612.0,
+            "meter_id_string": "MSR.(ConEd)(LT-ELEC-001):(M1)",
+            "account_number": "LT-ELEC-001",
+            "site_name": "Liberty Tower"
+        }
+    },
+    {
+        "label": "Bill 2 - Unit mismatch (ccf on a kWh meter)",
+        "narrative": "Same Liberty Tower main electric meter, but the upload says ccf. UNIT_MISMATCH is the canonical fixable HIGH flag: routes to DraftForHumanReview so the drafter can propose a relabel.",
+        "bill": {
+            "period_start": "2026-05-01",
+            "period_end": "2026-05-31",
+            "usage": 30100,
+            "usage_units": "ccf",
+            "currency": "USD",
+            "cost": 3612.0,
+            "meter_id_string": "MSR.(ConEd)(LT-ELEC-001):(M1)",
+            "account_number": "LT-ELEC-001",
+            "site_name": "Liberty Tower"
+        }
+    },
+    {
+        "label": "Bill 3 - Gap detected",
+        "narrative": "Bill arrives for July 2026 on Liberty M2; the most recent reading on that meter ends 2026-04-30. The ~62-day gap is high-severity and escalates.",
+        "bill": {
+            "period_start": "2026-07-01",
+            "period_end": "2026-07-31",
+            "usage": 5800,
+            "usage_units": "kWh",
+            "currency": "USD",
+            "cost": 696.0,
+            "meter_id_string": "MSR.(ConEd)(LT-ELEC-001):(M2)",
+            "account_number": "LT-ELEC-001",
+            "site_name": "Liberty Tower"
+        }
+    },
+    {
+        "label": "Bill 4 - Overlap",
+        "narrative": "Pacific Plaza main electric; the incoming period (Apr 15 - May 14) overlaps the existing April reading on the same meter. Any overlap is high-severity and escalates.",
+        "bill": {
+            "period_start": "2026-04-15",
+            "period_end": "2026-05-14",
+            "usage": 27500,
+            "usage_units": "kWh",
+            "currency": "USD",
+            "cost": 4675.0,
+            "meter_id_string": "MSR.(PGE)(PP-ELEC-001):(M1)",
+            "account_number": "PP-ELEC-001",
+            "site_name": "Pacific Plaza"
+        }
+    },
+    {
+        "label": "Bill 5 - Unknown provider + unit mismatch",
+        "narrative": "A small gas meter at Liberty Tower whose provider ('GreenfieldCoop') is not in the reference library. The bill also reports kWh on a therms-locked meter. The unit mismatch routes to DraftForHumanReview; the drafter sees the unknown provider in context and is encouraged to flag the onboarding need in its basis note.",
+        "bill": {
+            "period_start": "2026-05-01",
+            "period_end": "2026-05-31",
+            "usage": 620,
+            "usage_units": "kWh",
+            "currency": "USD",
+            "cost": 806.0,
+            "meter_id_string": "MSR.(GreenfieldCoop)(LT-GAS-002):(M2)",
+            "account_number": "LT-GAS-002",
+            "site_name": "Liberty Tower"
+        }
+    },
+    {
+        "label": "Bill 6 - Inactive meter",
+        "narrative": "Reading received against a meter that exists but is flagged inactive. INACTIVE_METER is a high-severity non-fixable flag; the bill escalates to the inactive-meter queue.",
+        "bill": {
+            "period_start": "2026-05-01",
+            "period_end": "2026-05-31",
+            "usage": 28900,
+            "usage_units": "kWh",
+            "currency": "USD",
+            "cost": 3468.0,
+            "meter_id_string": "MSR.(ConEd)(LT-ELEC-001):(OLD-M0)",
+            "account_number": "LT-ELEC-001",
+            "site_name": "Liberty Tower"
+        }
+    }
+]
