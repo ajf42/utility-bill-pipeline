@@ -42,13 +42,13 @@ Verbatim from [DESIGN.md](DESIGN.md) §6.
 Verbatim from [DESIGN.md](DESIGN.md) §6.
 
 - [ ] Triage service with three-route decision logic — commit `________`
-- [x] Resolution Drafter Service (single Claude call, structured output) — standalone build (not yet wired into the pipeline; wiring lands with the Triage service). Commit `________` (filled on commit).
+- [x] Resolution Drafter Service (single Claude call, structured output) — standalone build (not yet wired into the pipeline; wiring lands with the Triage service). Commit `1b1ce8a`.
 - [ ] `POST /batches` endpoint with simplified XLSX template parser — commit `________`
 - [ ] Batch summary report assembly — commit `________`
 - [ ] AuditEntry writes to SQLite — commit `________`
 - [ ] 4 sample scenarios constructed and documented in `samples/scenarios.md` — commit `________`
 - [ ] Tests for triage logic with explicit expected decisions — commit `________`
-- [x] Tests for resolution drafter (mock the Claude call in tests) — landed alongside the service in the standalone build. Commit `________` (filled on commit).
+- [x] Tests for resolution drafter (mock the Claude call in tests) — landed alongside the service in the standalone build. Commit `1b1ce8a`.
 
 ## Phase 4 — Walkthrough Prep
 
