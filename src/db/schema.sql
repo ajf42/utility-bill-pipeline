@@ -5,14 +5,18 @@
 -- All CREATE statements use IF NOT EXISTS so this file can be re-executed
 -- against an existing DB without error.
 --
+-- Tightening constraints requires dropping the existing DB file before
+-- re-seeding. Production scale uses migration tooling; see scale-to-production
+-- doc.
+--
 -- PRAGMA foreign_keys = ON is set on each connection in store.py (it is a
 -- per-connection pragma, not a schema-level one).
 
 CREATE TABLE IF NOT EXISTS sites (
     id            INTEGER PRIMARY KEY,
     name          TEXT NOT NULL,
-    portfolio_id  INTEGER,
-    region        TEXT
+    portfolio_id  INTEGER NOT NULL,
+    region        TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
@@ -30,7 +34,7 @@ CREATE TABLE IF NOT EXISTS meters (
     unit                TEXT NOT NULL,
     currency            TEXT NOT NULL,
     type                TEXT NOT NULL,
-    landlord_or_tenant  TEXT,
+    landlord_or_tenant  TEXT NOT NULL,
     active              INTEGER NOT NULL DEFAULT 1,
     start_date          TEXT NOT NULL,
     end_date            TEXT
@@ -44,7 +48,7 @@ CREATE TABLE IF NOT EXISTS readings (
     usage            REAL NOT NULL,
     usage_units      TEXT NOT NULL,
     cost             REAL,
-    currency         TEXT,
+    currency         TEXT NOT NULL,
     demand_kw        REAL,
     demand_spend     REAL,
     energy_exported  REAL,
@@ -55,7 +59,7 @@ CREATE TABLE IF NOT EXISTS readings (
 
 CREATE TABLE IF NOT EXISTS audit_entries (
     id                  INTEGER PRIMARY KEY,
-    bill_external_ref   TEXT,
+    bill_external_ref   TEXT NOT NULL,
     batch_id            TEXT,
     timestamp           TEXT NOT NULL,
     source_mode         TEXT,

@@ -211,7 +211,9 @@ A small in-memory library of utility providers (~10), each with:
 - Typical units of measure
 - 1–2 known quirks (illustrative)
 
-Plus a unit conversion table (kWh, therms, MMBtu, m³, ccf, gallons, HCF) and a regional ruleset (US, EU) for decimal/comma separators and date format.
+Plus a unit conversion table (kWh, therms, MMBtu, m³, ccf, gallons, HCF) and a regional ruleset for decimal/comma separators, date format, and a default currency.
+
+**Regional granularity.** The reference layer uses **three** regions — `US-East`, `US-West`, `EU` — so the provider library can group by service territory. Site entities use the coarser two-region tag (`US`, `EU`) which is sufficient for the entity model; the finer split lives only inside the reference layer. The decimal/date conventions are: US-East and US-West use `.` and `MM/DD/YYYY`; EU uses `,` and `DD/MM/YYYY`. Default currencies: `US-East` → USD, `US-West` → USD, `EU` → GBP. The GBP default for EU is narrow rather than principled — the curated EU provider entries (British Gas, Thames Water, EDF Energy UK) all bill in GBP — and the rationale is logged under DECISIONS.md "Spec gaps observed" rather than a separate ADR.
 
 **Acknowledged simplification.** Real provider quirks are not a flat list — they are a tree of provider → tariff type → rate schedule → bill format. The prototype reference library is illustrative. The scale-to-production doc covers what a tariff-aware reference store looks like and how an AI system might observe manual onboarding decisions to propose new entries over time.
 
@@ -234,6 +236,10 @@ audit_entries (id, bill_external_ref, batch_id, timestamp,
 Consulted by Reconciliation (to fetch prior readings for the same meter for gap/overlap analysis) and updated after Triage on the AutoResolve path.
 
 DECISIONS.md entry: "Prototype uses SQLite because it gives real SQL semantics, real foreign keys, real indexes, and zero infrastructure overhead. Production would use Postgres with read replicas for dashboard joins, a queue-based write pattern, and CDC streams to the downstream consumers."
+
+**Persistence contract — schema/pydantic alignment.** The SQLite schema is tightened to `NOT NULL` wherever the corresponding pydantic model field is required. Specifically, `sites.region`, `sites.portfolio_id`, `meters.landlord_or_tenant`, `readings.currency`, and `audit_entries.bill_external_ref` are `NOT NULL`. The principle: pydantic is the contract source of truth, and the schema mirrors that contract. If a future spec change makes a field optional, both layers update together. Tightening a constraint on an existing table is not re-run-safe (the prototype handles this by deleting `prototype.db` before re-seeding); production scale uses migration tooling — covered in the scale-to-production doc.
+
+**add_reading contract — write-time metadata.** The readings table carries three columns that describe how a reading entered the system rather than the reading itself: `source_mode`, `batch_id`, and `ingested_at`. They are deliberately not modeled on the `Reading` pydantic class because they are persistence-layer concerns, not data-shape ones. `MeterHistoryStore.add_reading` accepts them as keyword arguments with this contract: `source_mode` is required with no default (pipeline writes pass it from the `RawBillInput.source_mode`; fixture seeding passes `"FIXTURE"` explicitly — no magic default); `ingested_at` defaults to `datetime.now(UTC)` if not provided; `batch_id` is optional and defaults to `None` (set only on the XLSX batch path).
 
 #### Reconciliation Service
 

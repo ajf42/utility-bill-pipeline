@@ -178,7 +178,7 @@ class MeterHistoryStore:
         self,
         reading: Reading,
         *,
-        source_mode: str = "FIXTURE",
+        source_mode: str,
         batch_id: Optional[str] = None,
         ingested_at: Optional[datetime] = None,
     ) -> int:
@@ -186,8 +186,11 @@ class MeterHistoryStore:
 
         ``source_mode``, ``batch_id``, and ``ingested_at`` are columns on
         the readings table that aren't on the Reading pydantic model —
-        they describe how the reading entered the system. Defaults serve
-        Phase 1 fixture seeding; the pipeline writes will set them.
+        they describe how the reading entered the system. Per DESIGN.md §4
+        ("Persistence Layer / add_reading contract") ``source_mode`` is
+        required with no default (pipeline writes pass it from the
+        ``RawBillInput``; fixture seeding passes ``"FIXTURE"`` explicitly).
+        ``ingested_at`` defaults to ``datetime.now(UTC)`` when unset.
         """
 
         if ingested_at is None:

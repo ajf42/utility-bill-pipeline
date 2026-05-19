@@ -102,9 +102,9 @@ def test_full_hierarchy_roundtrip(store):
     meter_id = store.add_meter(_meter(acct_id))
     assert meter_id > 0
 
-    r1 = store.add_reading(_reading(meter_id, month=1))
-    r2 = store.add_reading(_reading(meter_id, month=2))
-    r3 = store.add_reading(_reading(meter_id, month=3))
+    r1 = store.add_reading(_reading(meter_id, month=1), source_mode="FIXTURE")
+    r2 = store.add_reading(_reading(meter_id, month=2), source_mode="FIXTURE")
+    r3 = store.add_reading(_reading(meter_id, month=3), source_mode="FIXTURE")
     assert r1 != r2 != r3
 
     priors = store.get_prior_readings(meter_id, limit=12)
@@ -140,10 +140,25 @@ def test_get_prior_readings_respects_limit(store):
     acct_id = store.add_account(_account(site_id))
     meter_id = store.add_meter(_meter(acct_id))
     for month in range(1, 13):
-        store.add_reading(_reading(meter_id, month=month))
+        store.add_reading(_reading(meter_id, month=month), source_mode="FIXTURE")
 
     assert len(store.get_prior_readings(meter_id, limit=5)) == 5
     assert len(store.get_prior_readings(meter_id, limit=20)) == 12
+
+
+def test_add_reading_requires_source_mode(store):
+    """Per DESIGN.md §4 the add_reading contract makes source_mode a
+    keyword-required argument with no default; pipeline writes must pass
+    it explicitly so the audit log records how the reading entered the
+    system. Omitting it is a programming error, not a runtime fallback.
+    """
+
+    site_id = store.add_site(_site())
+    acct_id = store.add_account(_account(site_id))
+    meter_id = store.add_meter(_meter(acct_id))
+
+    with pytest.raises(TypeError):
+        store.add_reading(_reading(meter_id))  # type: ignore[call-arg]
 
 
 def test_meter_optional_end_date_round_trips(store):
