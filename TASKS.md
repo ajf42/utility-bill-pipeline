@@ -31,11 +31,11 @@ Verbatim from [DESIGN.md](DESIGN.md) §6.
 - [x] JSON-row ingestion handler — commit `2153de0` (same commit as above; the route handler and the service it delegates to landed together because the route has nothing to test without the service)
 - [x] Reference data layer with 10 providers + unit conversion — commit `3d16ff8`
 - [x] Normalization service with structural quality signals — commit `9ddfa36`
-- [x] Reconciliation service consulting the store — commit `services: add reconciliation service consulting the meter history store` (lookup via `git log --grep`; this commit's own hash cannot be embedded into itself — will be backfilled in the next commit)
-- [ ] Schema validation — commit `________`
-- [ ] Two domain heuristics (gap, overlap) — commit `________`
-- [ ] Structural checks (unit/currency/name/inactive) — commit `________`
-- [ ] Tests for each service — commit `________`
+- [x] Reconciliation service consulting the store — commit `857feee`
+- [x] Schema validation — commit `services: add validation service with heuristics and structural checks; complete Phase 2 with e2e integration test` (lookup via `git log --grep`; backfilled in the next commit)
+- [x] Two domain heuristics (gap, overlap) — commit `services: add validation service ...` (same commit; the validation service is a single coherent unit)
+- [x] Structural checks (unit/currency/name/inactive) — commit `services: add validation service ...` (same commit; `name_mismatch` omitted with a spec-gap note — unreachable under strict three-key reconciliation)
+- [x] Tests for each service — commit `services: add validation service ...` (per-service test files landed alongside their services across Prompts 1–5; the validation tests and the Phase 2 e2e acceptance gate land in this commit)
 
 ## Phase 3 — Triage, Drafter, Batch
 

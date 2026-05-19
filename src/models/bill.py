@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from .entities import Meter, Reading
+from .entities import Account, Meter, Reading
 from .quality import QualityFlag
 
 
@@ -60,13 +60,17 @@ class ReconciledBill(NormalizedBill):
 
     ``matched_meter`` is ``None`` when reconciliation could not resolve the
     incoming meter identifier; that case routes to Escalate with
-    ``METER_UNASSIGNED``. ``prior_readings`` is the last N readings on the
-    matched meter sorted by period (default N=12). ``prior_context`` is the
-    summary the gap/overlap heuristics actually consume:
+    ``METER_UNASSIGNED``. ``matched_account`` is the parent Account fetched
+    alongside the meter (None when ``matched_meter`` is None) — validation
+    uses it for the ``GENERATION_MISMATCH`` check. ``prior_readings`` is
+    the last N readings on the matched meter sorted by period (default
+    N=12). ``prior_context`` is the summary the gap/overlap heuristics
+    actually consume:
     ``{"prior_period_end": date | None, "count_of_prior_readings": int}``.
     """
 
     matched_meter: Optional[Meter] = None
+    matched_account: Optional[Account] = None
     prior_readings: list[Reading] = Field(default_factory=list)
     prior_context: dict[str, Any] = Field(default_factory=dict)
 

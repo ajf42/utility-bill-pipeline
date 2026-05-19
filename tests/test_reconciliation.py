@@ -201,7 +201,7 @@ def test_post_bills_known_meter_returns_matched_with_priors(seeded_client):
     response = seeded_client.post("/bills", json=_liberty_main_payload())
     assert response.status_code == 200
     body = response.json()
-    assert body["pipeline_status"] == "reconciled"
+    assert body["pipeline_status"] == "validated"
     reconciled = body["reconciled"]
     assert reconciled["matched_meter"] is not None
     assert (

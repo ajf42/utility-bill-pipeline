@@ -228,6 +228,19 @@ class MeterHistoryStore:
         ).fetchone()
         return _site_from_row(row) if row else None
 
+    def get_account(self, account_id: int) -> Optional[Account]:
+        """Fetch an account by rowid. Used by reconciliation to attach the
+        owning account to the bill so validation can check fields like
+        ``generation_account`` without re-opening the store.
+        """
+
+        row = self._conn.execute(
+            "SELECT id, account_number, account_type, site_id, generation_account "
+            "FROM accounts WHERE id = ? LIMIT 1",
+            (account_id,),
+        ).fetchone()
+        return _account_from_row(row) if row else None
+
     def find_meter(
         self,
         meter_id_string: str,

@@ -246,8 +246,8 @@ DECISIONS.md entry: "Prototype uses SQLite because it gives real SQL semantics, 
 For each incoming bill, after normalization:
 1. Resolve the meter: match incoming meter identifier + account number + site name against the meters table.
 2. If no match → flag for routing to the `meter_unassigned` sub-route of Escalate.
-3. If match → fetch the last N readings (default 12) for that meter, sorted by period.
-4. Attach prior context to the bill: prior period end, count of prior readings.
+3. If match → fetch the last N readings (default 12) for that meter, sorted by period. Also fetch the parent Account so validation can check fields like `generation_account` without re-opening the store.
+4. Attach to the bill: the matched meter, the matched account, the prior readings, and a `prior_context` summary (prior period end, count of prior readings).
 
 This is where stateful logic begins. The rest of the pipeline operates with reconciled context attached.
 

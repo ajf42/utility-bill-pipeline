@@ -58,6 +58,7 @@ def reconcile(
     site_name = payload.get("site_name")
 
     matched_meter = None
+    matched_account = None
     prior_readings: list = []
     if (
         isinstance(meter_id_string, str)
@@ -69,6 +70,9 @@ def reconcile(
             prior_readings = store.get_prior_readings(
                 matched_meter.id, limit=prior_readings_limit
             )
+            # Fetch the parent account so validation can check
+            # generation_account without re-opening the store.
+            matched_account = store.get_account(matched_meter.account_id)
 
     prior_context: dict[str, Any] = {
         # The store returns readings sorted by period_end DESC, so the
@@ -87,6 +91,7 @@ def reconcile(
         normalized_units=normalized.normalized_units,
         structural_signals=normalized.structural_signals,
         matched_meter=matched_meter,
+        matched_account=matched_account,
         prior_readings=prior_readings,
         prior_context=prior_context,
     )

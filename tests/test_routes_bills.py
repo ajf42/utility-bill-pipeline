@@ -55,20 +55,20 @@ def test_health_returns_ok_and_version(client: TestClient):
     assert body["version"] == "0.2.0"
 
 
-def test_post_bills_with_valid_body_returns_reconciled_response(client: TestClient):
+def test_post_bills_with_valid_body_returns_validated_response(client: TestClient):
     body = _minimum_valid_body()
 
     response = client.post("/bills", json=body)
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["pipeline_status"] == "reconciled"
+    assert payload["pipeline_status"] == "validated"
     raw_input = payload["raw_input"]
     assert raw_input["source_mode"] == "JSON_ROW"
     assert raw_input["batch_id"] is None
     assert raw_input["raw_payload"] == body
-    # Normalization and reconciliation artifacts present with the
-    # expected sub-shapes; specifics are exercised in their own modules.
+    # Normalization, reconciliation, and validation artifacts present
+    # with the expected sub-shapes; specifics live in their own tests.
     normalized = payload["normalized"]
     assert "structural_signals" in normalized
     assert "field_type_valid" in normalized["structural_signals"]
@@ -77,6 +77,10 @@ def test_post_bills_with_valid_body_returns_reconciled_response(client: TestClie
     assert reconciled["matched_meter"] is None
     assert reconciled["prior_readings"] == []
     assert reconciled["prior_context"]["count_of_prior_readings"] == 0
+    validated = payload["validated"]
+    # Unmatched meter -> exactly one METER_UNASSIGNED flag.
+    flag_types = [f["type"] for f in validated["flags"]]
+    assert "METER_UNASSIGNED" in flag_types
 
 
 def test_post_bills_missing_required_field_returns_422(client: TestClient):

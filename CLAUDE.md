@@ -31,7 +31,7 @@ The walkthrough audience is Matt Richardson, who owns Measurabl's back-office fu
 
 ## Current state
 
-**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: in progress.** The repo holds the methodology layer, the pydantic contracts, the SQLite persistence layer, the fixture seed data, the reference data layer, the FastAPI app entry, `POST /bills` with ingest → normalize → reconcile wired, and the three service modules behind it. `POST /bills` now returns `pipeline_status: "reconciled"` with `raw_input`, `normalized`, and `reconciled` artifacts attached; validation and triage land in subsequent prompts. Next up: validation service (schema + gap/overlap heuristics + structural checks).
+**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: complete.** The repo runs the full single-row pipeline end-to-end through `POST /bills`: ingest → normalize → reconcile → validate. `POST /bills` returns `pipeline_status: "validated"` with `raw_input`, `normalized`, `reconciled`, and `validated` artifacts attached. The e2e acceptance gate ([tests/test_pipeline_e2e.py](tests/test_pipeline_e2e.py)) covers the clean-bill no-HIGH-flags scenario and the dirty-bill UNIT_MISMATCH+GAP scenario against a fixture-seeded DB. Next up: Phase 3 — Triage service with three-route decision logic, Resolution Drafter Service, `POST /batches` XLSX handler, AuditEntry writes, and four sample scenarios in `samples/scenarios.md`.
 
 What exists:
 
@@ -53,12 +53,14 @@ What exists:
 - `tests/test_ingestion.py` — 11 tests covering RawBillInput construction, payload copy-not-alias, parametrized missing-field rejection across all seven required fields, optional-field preservation, and non-dict rejection
 - `tests/test_normalization.py` — 19 tests covering NormalizedBill contract, signal-key presence on garbage input, provider canonicalization (known / unknown / malformed meter-id), usage range, billing-period range, malformed-date non-raising, unit case-insensitive canonicalization, currency-region cross-field agreement, unit-typical agreement, cost range, the all-False busted-payload case, and two route-integration paths via TestClient (with `get_store` overridden to an empty tmp DB)
 - `tests/test_reconciliation.py` — 10 tests covering ReconciledBill contract, no-match empty-prior-context, matched-meter prior-readings attachment and prior_context summary, partial-match misses (wrong account / wrong site), prior_readings_limit override, date-not-datetime invariant, and two route-integration paths via TestClient (with `get_store` overridden to a fixture-seeded tmp DB)
-- `tests/test_routes_bills.py` — 3 tests (TestClient) covering `GET /health`, the `POST /bills` reconciled-response shape, and the 422 boundary (all using an empty tmp-DB override on `get_store`)
+- `tests/test_validation.py` — 15 tests, one per check or branch: clean-bill no flags, UNIT_MISMATCH (HIGH), CURRENCY_MISMATCH (HIGH), INACTIVE_METER (HIGH), GENERATION_MISMATCH (HIGH) + the no-fire-when-generation-account case, GAP at 10/4/1 days, no-prior no-GAP, OVERLAP (HIGH), contiguous-not-overlap, METER_UNASSIGNED isolation (no other checks fire), FORMAT_INVALID when period_start ≥ period_end
+- `tests/test_pipeline_e2e.py` — Phase 2 acceptance gate: 2 tests through the live FastAPI route against a fixture-seeded tmp DB. Clean bill → no HIGH-severity flags; dirty bill (therms on a kWh meter, 14-day gap) → UNIT_MISMATCH HIGH + GAP HIGH.
+- `tests/test_routes_bills.py` — 3 tests (TestClient) covering `GET /health`, the `POST /bills` validated-response shape with a METER_UNASSIGNED flag against the empty-store override, and the 422 boundary
 - `scripts/check_design_sync.py` + `tests/test_design_sync.py` — structural drift guard that parses DESIGN.md §8 at runtime and fails if any ≥12-word contiguous block from §8 also appears in CLAUDE.md (normalized comparison)
 
-What does **not** yet exist (Phase 2+):
+What does **not** yet exist (Phase 3+):
 
-- Remaining service code (validation, triage, drafter, audit, output)
+- Triage service (three-route decision logic), Resolution Drafter Service (single Claude call), audit-log writer, output writer
 - `POST /batches` route (XLSX batch handler)
 - Sample scenarios in `samples/scenarios.md`
 
@@ -78,7 +80,7 @@ The pydantic models are the contracts every downstream stage and the audit log c
 Two SQLite-backed stores share one DB file. Stdlib `sqlite3` only, no ORM (see ADR-007).
 
 - [src/db/schema.sql](src/db/schema.sql) — DDL for `sites`, `accounts`, `meters`, `readings`, `audit_entries`. Dates and datetimes are ISO 8601 TEXT; booleans are INTEGER 0/1. All CREATE statements use `IF NOT EXISTS` so the schema is idempotent. Indexes: `readings(meter_id, period_end)` for reconciliation lookups, plus `batch_id` and `bill_external_ref` on `audit_entries`. Five columns are `NOT NULL` to mirror pydantic required-ness per DESIGN.md §4 "Persistence contract" (`sites.region`, `sites.portfolio_id`, `meters.landlord_or_tenant`, `readings.currency`, `audit_entries.bill_external_ref`); tightening constraints is not re-run-safe, so re-seeding requires deleting `prototype.db` first.
-- [src/db/store.py](src/db/store.py) — `MeterHistoryStore` (sites/accounts/meters/readings, plus the three-key `find_meter` reconciliation lookup and `get_prior_readings`) and `AuditLogStore` (record / query by bill_external_ref / query by batch_id). Each store owns its own connection with `PRAGMA foreign_keys = ON`; writes commit explicitly. Pydantic models in and out; SQL stays inside this module. The AuditEntry payload round-trips through a single `payload_json` column with a few denormalized columns alongside for query speed. `add_reading` takes `source_mode` as a keyword-required argument with no default per DESIGN.md §4 "add_reading contract" (pipeline writes pass it from the `RawBillInput`; fixture seeding passes `"FIXTURE"` explicitly); `ingested_at` defaults to `datetime.now(UTC)`.
+- [src/db/store.py](src/db/store.py) — `MeterHistoryStore` (sites/accounts/meters/readings, plus the three-key `find_meter` reconciliation lookup, `get_prior_readings`, and `get_account` for fetching a meter's parent account) and `AuditLogStore` (record / query by bill_external_ref / query by batch_id). Each store owns its own connection with `PRAGMA foreign_keys = ON`; writes commit explicitly. Pydantic models in and out; SQL stays inside this module. The AuditEntry payload round-trips through a single `payload_json` column with a few denormalized columns alongside for query speed. `add_reading` takes `source_mode` as a keyword-required argument with no default per DESIGN.md §4 "add_reading contract" (pipeline writes pass it from the `RawBillInput`; fixture seeding passes `"FIXTURE"` explicitly); `ingested_at` defaults to `datetime.now(UTC)`.
 
 ### Fixtures
 
@@ -98,11 +100,12 @@ In-memory, no DB and no FastAPI deps. Downstream services (normalization, valida
 FastAPI app, no middleware / auth / CORS. Run locally with `uvicorn src.main:app --reload`.
 
 - [src/main.py](src/main.py) — instantiates `FastAPI(title="Utility Bill Pipeline", version="0.2.0")`, mounts the bills router, exposes `GET /health` returning `{"status": "ok", "version": "0.2.0"}`.
-- [src/routes/bills.py](src/routes/bills.py) — `POST /bills` handler. Accepts a loose `dict` body, runs ingest → normalize → reconcile, returns `{"raw_input": <RawBillInput>, "normalized": <NormalizedBill>, "reconciled": <ReconciledBill>, "pipeline_status": "reconciled"}`. The store is injected via `Depends(get_store)`. `ValueError` from ingestion maps to HTTP 422; normalization and reconciliation never raise (per ADR-003 / DESIGN.md §4) so no extra boundary handling is needed. Validation / triage will extend this response shape in subsequent prompts.
+- [src/routes/bills.py](src/routes/bills.py) — `POST /bills` handler. Accepts a loose `dict` body, runs ingest → normalize → reconcile → validate, returns `{"raw_input": <RawBillInput>, "normalized": <NormalizedBill>, "reconciled": <ReconciledBill>, "validated": <ValidatedBill>, "pipeline_status": "validated"}`. The store is injected via `Depends(get_store)`. `ValueError` from ingestion maps to HTTP 422; the post-ingestion stages never raise (per ADR-003 / DESIGN.md §4) so no extra boundary handling is needed. Triage and audit will extend this response shape in Phase 3.
 - [src/routes/dependencies.py](src/routes/dependencies.py) — `get_store()` FastAPI generator dependency. Opens a `MeterHistoryStore` against `$DB_PATH` (default `./prototype.db`) per request, yields it, closes on teardown. Tests override via `app.dependency_overrides[get_store] = ...` to point at a tmp-path DB.
 - [src/services/ingestion.py](src/services/ingestion.py) — `ingest_json_row(payload: dict) -> RawBillInput`. Validates presence of the seven required fields (`period_start`, `period_end`, `usage`, `usage_units`, `meter_id_string`, `account_number`, `site_name`) and constructs a `RawBillInput` with `source_mode=JSON_ROW` and `batch_id=None`. Field parsing and canonicalization belong to normalization, not here. Payload is shallow-copied so caller mutations don't reach the artifact.
 - [src/services/normalization.py](src/services/normalization.py) — `normalize(raw_input: RawBillInput) -> NormalizedBill`. Parses ISO dates, canonicalizes the unit string case-insensitively against the `Unit` enum, extracts the provider alias from the `MSR.(provider)(account):(meter)` convention and looks it up in the reference library, ISO-4217-shape-checks the currency (defaults to the regional currency when absent if the provider is known), and emits structural signals under the categories DESIGN.md §4 names: `field_type_valid`, `value_in_range`, `provider_known`, `provider_alias_parsed`, `unit_known`, `cross_field_agreement`. Per ADR-003 / ADR-008 every leaf is a plain boolean; inapplicable per-field checks are omitted from their sub-dict, inapplicable cross-field checks default to `False`. The service never raises on bad data — failures are recorded as `False` signals. Module-level constants pin the plausible-range thresholds (`_BILLING_PERIOD_MIN_DAYS=25`, `_BILLING_PERIOD_MAX_DAYS=35`).
-- [src/services/reconciliation.py](src/services/reconciliation.py) — `reconcile(normalized: NormalizedBill, store: MeterHistoryStore, *, prior_readings_limit: int = 12) -> ReconciledBill`. Resolves the three-key triple (`meter_id_string`, `account_number`, `site_name`) against the store; on hit, fetches the last N prior readings and computes `prior_context = {prior_period_end, count_of_prior_readings}`; on miss, returns a `ReconciledBill` with `matched_meter=None`, `prior_readings=[]`, and zeroed prior_context. Never raises on miss — the "no match" case is a valid pipeline outcome that triggers `meter_unassigned` escalation downstream. Stateless beyond the injected store; does not open connections itself. The default 12 is `DEFAULT_PRIOR_READINGS_LIMIT` at module scope.
+- [src/services/reconciliation.py](src/services/reconciliation.py) — `reconcile(normalized: NormalizedBill, store: MeterHistoryStore, *, prior_readings_limit: int = 12) -> ReconciledBill`. Resolves the three-key triple (`meter_id_string`, `account_number`, `site_name`) against the store; on hit, fetches the last N prior readings and the parent account (via `store.get_account`) and computes `prior_context = {prior_period_end, count_of_prior_readings}`; on miss, returns a `ReconciledBill` with `matched_meter=None`, `matched_account=None`, `prior_readings=[]`, and zeroed prior_context. Never raises on miss — the "no match" case is a valid pipeline outcome that triggers `meter_unassigned` escalation downstream. Stateless beyond the injected store; does not open connections itself. The default 12 is `DEFAULT_PRIOR_READINGS_LIMIT` at module scope.
+- [src/services/validation.py](src/services/validation.py) — `validate(reconciled: ReconciledBill) -> ValidatedBill`. Runs schema checks (period_start strictly before period_end → `FORMAT_INVALID`), structural checks against `matched_meter` (`UNIT_MISMATCH`, `CURRENCY_MISMATCH`, `INACTIVE_METER`), structural checks against `matched_account` (`GENERATION_MISMATCH` for `energy_exported > 0` on a non-generation account), and the two domain heuristics with prior context (`GAP`: ≤2 days no flag / 2–7 days MEDIUM / >7 days HIGH; `OVERLAP`: any prior-period intersection HIGH). When `matched_meter` is None, emits exactly one HIGH `METER_UNASSIGNED` flag (plus any schema-level format issues); all matched-meter / matched-account / prior-context checks short-circuit naturally. Never raises. Thresholds (`_GAP_MEDIUM_DAYS=2`, `_GAP_HIGH_DAYS=7`) are module-level constants. The `name_mismatch` check from DESIGN.md §4 is intentionally omitted — strict three-key `find_meter` makes a site-name disagreement an unmatched-meter case, so the check is unreachable; see DECISIONS.md "Spec gaps observed".
 
 ## File structure (as it stands)
 
@@ -136,6 +139,7 @@ utility-bill-pipeline/
       ingestion.py
       normalization.py
       reconciliation.py
+      validation.py
     routes/
       __init__.py
       bills.py
@@ -149,6 +153,8 @@ utility-bill-pipeline/
     test_ingestion.py
     test_normalization.py
     test_reconciliation.py
+    test_validation.py
+    test_pipeline_e2e.py
     test_routes_bills.py
     test_design_sync.py
   scripts/
