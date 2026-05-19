@@ -116,6 +116,22 @@ Alternatives considered: SQLAlchemy ORM (rejected — adds a dependency, introdu
 
 ---
 
+## ADR-008 — Structural signals are nested dicts of plain booleans
+
+**Status:** Accepted (2026-05-19)
+
+**Context:** [ADR-003](#adr-003--structural-only-confidence-model-no-llm-self-reported-confidence) commits the system to structural-only confidence — signals come from observable checks, never an LLM self-report. The normalization service ([src/services/normalization.py](src/services/normalization.py)) is the first place that produces signals at scale, and the shape it picks dictates how triage, the audit log, and any future human reviewer read them. Three real options surfaced during implementation: a flat list of structured records (e.g., `[{name, ok, reason}, ...]`), a flat dict of dotted names (e.g., `{"field_type_valid.usage": True, "value_in_range.usage": True}`), or a small set of nested dicts grouped by signal category (`{"field_type_valid": {"usage": True, ...}, "value_in_range": {...}, ...}`).
+
+The list-of-records shape is the most "queryable" but it duplicates the QualityFlag concept the validation service already owns and pushes triage to do its own filtering by `name`. The flat-dotted-name shape is the most database-friendly but is the least readable when printed verbatim in an audit entry. The nested-dict shape mirrors the categories DESIGN.md §4 names ("type and format validation", "plausible range", "provider presence", "cross-field agreement") so an audit reader sees the categories at a glance, and each leaf is a single boolean a triage rule can check directly.
+
+A secondary decision under the same heading: how to represent "this check did not apply" (e.g., `value_in_range.cost` when no cost was provided, or `cross_field_agreement.currency_matches_region` when the provider could not be resolved). The options were tri-valued booleans (`True` / `False` / `None`) or the binary-with-omission pattern.
+
+**Decision:** Structural signals are a `dict` with these top-level keys: `field_type_valid` (dict[str, bool] per field), `value_in_range` (dict[str, bool] per field), `provider_known` (bool), `provider_alias_parsed` (bool), `unit_known` (bool), `cross_field_agreement` (dict[str, bool] per check). All leaves are plain booleans — no `Optional[bool]`. Inapplicable per-field checks are **omitted** from their sub-dict (so the absence of `value_in_range["cost"]` is itself the "no cost was provided" signal). Inapplicable top-level cross-field checks (when the provider is unknown) default to `False` rather than being omitted — they are flag-liberal, biasing toward "we noticed something might be wrong" per ADR-003.
+
+**Consequences:** Triage rules look like `signals["value_in_range"]["usage"]` — readable and decoupled from the per-flag QualityFlag concept that validation owns separately. Audit-log readers see the DESIGN.md §4 categories on sight when the JSON is pretty-printed. The omission convention requires that triage and validation use `.get()` or membership checks rather than direct indexing on per-field sub-dicts; this is explicit in the consumer code and is testable. The False-on-missing-dependency convention for cross-field checks costs us the ability to distinguish "noticed and disagreed" from "couldn't check"; the audit reader gets that distinction from the sibling `provider_known=False` signal. The structured-record alternative remains available as a future enhancement — it would be a transform over the same dict, not a replacement.
+
+---
+
 ## Spec gaps observed
 
 Gaps in [DESIGN.md](DESIGN.md) that surfaced during a build step and required either a decision or a clarification before proceeding. Per the ambiguity-handling rule in [CLAUDE.md](CLAUDE.md), inventing on ambiguous spec is forbidden — any gap encountered is logged here, optionally accompanied by a `TODO` in the code at the point of contact.

@@ -31,7 +31,7 @@ The walkthrough audience is Matt Richardson, who owns Measurabl's back-office fu
 
 ## Current state
 
-**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: in progress.** The repo holds the methodology layer, the pydantic contracts, the SQLite persistence layer, the fixture seed data, the reference data layer, the FastAPI app entry, and `POST /bills` with the JSON-row ingestion handler. `POST /bills` currently returns a stub response (`pipeline_status: "ingested_only_not_yet_processed"`) — subsequent prompts wire normalization, reconciliation, validation, and triage. Next up: normalization service.
+**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: in progress.** The repo holds the methodology layer, the pydantic contracts, the SQLite persistence layer, the fixture seed data, the reference data layer, the FastAPI app entry, `POST /bills` with the JSON-row ingestion handler, and the normalization service. `POST /bills` now returns `pipeline_status: "normalized"` with the `NormalizedBill` attached; reconciliation, validation, and triage land in subsequent prompts. Next up: reconciliation service.
 
 What exists:
 
@@ -39,7 +39,7 @@ What exists:
 - [DESIGN.md](DESIGN.md) — authoritative spec
 - [README.md](README.md) — skeleton with architecture diagram placeholder, quick start, walkthrough placeholder, status
 - [CLAUDE.md](CLAUDE.md) — this file
-- [DECISIONS.md](DECISIONS.md) — initialized with ADR-001 through ADR-007 plus a Spec gaps observed section
+- [DECISIONS.md](DECISIONS.md) — ADR-001 through ADR-008 plus a Spec gaps observed section
 - [TASKS.md](TASKS.md) — Phase 2–4 backlog; Phase 1 marked complete with commit references
 - pydantic v2 data models under `src/models/` (see Models below)
 - SQLite schema and stores under `src/db/` (see Persistence below)
@@ -49,14 +49,15 @@ What exists:
 - `tests/test_fixtures.py` — 4 tests covering fixture counts, meter resolution, the Liberty main gap-scenario seed, and end-to-end round-trip via pydantic
 - Reference data layer under `src/services/reference.py` (see Reference layer below)
 - `tests/test_reference.py` — 15 tests covering module load, provider library contract, alias + case-insensitive canonicalization, unit conversion (direct, inverse, identity, incompatible-unit failure), and regional rules
-- FastAPI app entry at `src/main.py`, bills router at `src/routes/bills.py`, ingestion service at `src/services/ingestion.py` (see HTTP surface below)
+- FastAPI app entry at `src/main.py`, bills router at `src/routes/bills.py`, ingestion service at `src/services/ingestion.py`, normalization service at `src/services/normalization.py` (see HTTP surface and Services below)
 - `tests/test_ingestion.py` — 11 tests covering RawBillInput construction, payload copy-not-alias, parametrized missing-field rejection across all seven required fields, optional-field preservation, and non-dict rejection
-- `tests/test_routes_bills.py` — 3 tests (TestClient) covering `GET /health`, the `POST /bills` stub-response shape, and the 422 boundary
+- `tests/test_normalization.py` — 19 tests covering NormalizedBill contract, signal-key presence on garbage input, provider canonicalization (known / unknown / malformed meter-id), usage range, billing-period range, malformed-date non-raising, unit case-insensitive canonicalization, currency-region cross-field agreement, unit-typical agreement, cost range, the all-False busted-payload case, and two route-integration paths via TestClient
+- `tests/test_routes_bills.py` — 3 tests (TestClient) covering `GET /health`, the `POST /bills` normalized-response shape, and the 422 boundary
 - `scripts/check_design_sync.py` + `tests/test_design_sync.py` — structural drift guard that parses DESIGN.md §8 at runtime and fails if any ≥12-word contiguous block from §8 also appears in CLAUDE.md (normalized comparison)
 
 What does **not** yet exist (Phase 2+):
 
-- Remaining service code (normalization, reconciliation, validation, triage, drafter, audit, output)
+- Remaining service code (reconciliation, validation, triage, drafter, audit, output)
 - `POST /batches` route (XLSX batch handler)
 - Sample scenarios in `samples/scenarios.md`
 
@@ -96,8 +97,9 @@ In-memory, no DB and no FastAPI deps. Downstream services (normalization, valida
 FastAPI app, no middleware / auth / CORS. Run locally with `uvicorn src.main:app --reload`.
 
 - [src/main.py](src/main.py) — instantiates `FastAPI(title="Utility Bill Pipeline", version="0.2.0")`, mounts the bills router, exposes `GET /health` returning `{"status": "ok", "version": "0.2.0"}`.
-- [src/routes/bills.py](src/routes/bills.py) — `POST /bills` handler. Accepts a loose `dict` body, delegates to `ingest_json_row`, returns `{"raw_input": <RawBillInput as JSON dict>, "pipeline_status": "ingested_only_not_yet_processed"}`. `ValueError` from the service is mapped to HTTP 422 at the boundary. The stub return is temporary; downstream stages replace it in subsequent prompts.
+- [src/routes/bills.py](src/routes/bills.py) — `POST /bills` handler. Accepts a loose `dict` body, runs ingestion + normalization, returns `{"raw_input": <RawBillInput>, "normalized": <NormalizedBill>, "pipeline_status": "normalized"}`. `ValueError` from ingestion maps to HTTP 422; normalization never raises (per ADR-003) so no extra boundary handling is needed. Reconciliation / validation / triage will extend this response shape in subsequent prompts.
 - [src/services/ingestion.py](src/services/ingestion.py) — `ingest_json_row(payload: dict) -> RawBillInput`. Validates presence of the seven required fields (`period_start`, `period_end`, `usage`, `usage_units`, `meter_id_string`, `account_number`, `site_name`) and constructs a `RawBillInput` with `source_mode=JSON_ROW` and `batch_id=None`. Field parsing and canonicalization belong to normalization, not here. Payload is shallow-copied so caller mutations don't reach the artifact.
+- [src/services/normalization.py](src/services/normalization.py) — `normalize(raw_input: RawBillInput) -> NormalizedBill`. Parses ISO dates, canonicalizes the unit string case-insensitively against the `Unit` enum, extracts the provider alias from the `MSR.(provider)(account):(meter)` convention and looks it up in the reference library, ISO-4217-shape-checks the currency (defaults to the regional currency when absent if the provider is known), and emits structural signals under the categories DESIGN.md §4 names: `field_type_valid`, `value_in_range`, `provider_known`, `provider_alias_parsed`, `unit_known`, `cross_field_agreement`. Per ADR-003 / ADR-008 every leaf is a plain boolean; inapplicable per-field checks are omitted from their sub-dict, inapplicable cross-field checks default to `False`. The service never raises on bad data — failures are recorded as `False` signals. Module-level constants pin the plausible-range thresholds (`_BILLING_PERIOD_MIN_DAYS=25`, `_BILLING_PERIOD_MAX_DAYS=35`).
 
 ## File structure (as it stands)
 
@@ -129,6 +131,7 @@ utility-bill-pipeline/
       __init__.py
       reference.py
       ingestion.py
+      normalization.py
     routes/
       __init__.py
       bills.py
@@ -139,6 +142,7 @@ utility-bill-pipeline/
     test_fixtures.py
     test_reference.py
     test_ingestion.py
+    test_normalization.py
     test_routes_bills.py
     test_design_sync.py
   scripts/
