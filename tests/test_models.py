@@ -162,13 +162,13 @@ def test_quality_flag_instantiation():
 def test_triage_decision_minimal_and_full():
     minimal = TriageDecision(route=TriageRoute.AUTO_RESOLVE, reasoning="all signals pass")
     assert minimal.routing_key is None
-    assert minimal.drafted_resolution is None
+    assert minimal.drafter_output is None
 
     full = TriageDecision(
         route=TriageRoute.ESCALATE,
         routing_key=RoutingKey.OVERLAP,
         reasoning="overlap detected with prior reading",
-        drafted_resolution=None,
+        drafter_output=None,
     )
     assert full.routing_key is RoutingKey.OVERLAP
 

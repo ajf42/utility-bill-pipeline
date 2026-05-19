@@ -11,27 +11,38 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from src.db.store import MeterHistoryStore
+from src.db.store import AuditLogStore, MeterHistoryStore
 from src.main import app
-from src.routes.dependencies import get_store
+from src.routes.dependencies import get_audit_store, get_drafter, get_store
 
 
 @pytest.fixture()
 def client(tmp_path) -> TestClient:
     db_path = tmp_path / "routes.db"
 
-    def _override():
+    def _store_override():
         store = MeterHistoryStore(db_path)
         try:
             yield store
         finally:
             store.close()
 
-    app.dependency_overrides[get_store] = _override
+    def _audit_override():
+        store = AuditLogStore(db_path)
+        try:
+            yield store
+        finally:
+            store.close()
+
+    app.dependency_overrides[get_store] = _store_override
+    app.dependency_overrides[get_audit_store] = _audit_override
+    app.dependency_overrides[get_drafter] = lambda: None
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(get_store, None)
+        app.dependency_overrides.pop(get_audit_store, None)
+        app.dependency_overrides.pop(get_drafter, None)
 
 
 def _minimum_valid_body() -> dict:
@@ -52,7 +63,7 @@ def test_health_returns_ok_and_version(client: TestClient):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["version"] == "0.2.0"
+    assert body["version"] == "0.3.0"
 
 
 def test_post_bills_with_valid_body_returns_validated_response(client: TestClient):
@@ -62,7 +73,10 @@ def test_post_bills_with_valid_body_returns_validated_response(client: TestClien
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["pipeline_status"] == "validated"
+    assert payload["pipeline_status"] == "triaged"
+    assert "audit_ref" in payload
+    assert payload["triage"]["route"] == "ESCALATE"
+    assert payload["triage"]["routing_key"] == "METER_UNASSIGNED"
     raw_input = payload["raw_input"]
     assert raw_input["source_mode"] == "JSON_ROW"
     assert raw_input["batch_id"] is None

@@ -174,6 +174,22 @@ Alternatives considered: silent retry with a tightened prompt (rejected — mask
 
 ---
 
+## ADR-012 — Approval applies the correction directly; it does not re-run validation
+
+**Status:** Accepted (2026-05-19)
+
+**Context:** The human approval endpoint (`POST /bills/{audit_ref}/approve`) takes a DraftForHumanReview bill, applies the drafter's `proposed_correction` to a copy of the original `raw_payload`, constructs a Reading, and writes it. The natural question: should the corrected bill be re-fed through the pipeline (normalize → reconcile → validate) before the write, so the AutoResolve invariants are re-asserted on the corrected shape? Three real options surfaced: (a) re-run the full pipeline on approval and only write if it now AutoResolves, (b) re-run validation only (skip normalize/reconcile because the meter is already matched), or (c) trust the approval and write the corrected Reading directly without re-validation.
+
+Re-running has a specific failure mode for this pipeline: the corrected bill is, by construction, *also* the bill that just triggered DraftForHumanReview. If validation re-runs, it will flag the same issue again (e.g., UNIT_MISMATCH if the correction didn't touch the unit, GAP if the period hasn't shifted) and the corrected bill will loop straight back into DraftForHumanReview — which the human just approved out of. The approval endpoint would refuse the write and the human would have no way to land it. The pipeline would be fighting the human review it was designed to gate on. Re-running validation also implicitly asserts that the *only* legitimate post-correction state is AutoResolve, which collapses the entire glass-box model — the human is the gate, not validation.
+
+Alternatives considered: re-run full pipeline (rejected, see above); re-run validation only with a "skip-original-flag" carve-out (rejected — the carve-out is an invented constraint with no clean spec home, and the carve-out logic is more likely to be wrong than the human's read).
+
+**Decision:** Approval does NOT re-run validation. The endpoint merges `proposed_correction` into a copy of the original `raw_payload`, validates each correction key against the known reading-level field set (`period_start`, `period_end`, `usage`, `usage_units`, `cost`, `currency`, `demand_kw`, `demand_spend`, `energy_exported`), constructs a Reading from the corrected payload, and persists it directly with `source_mode=DRAFTER_APPROVED`. The follow-up `AuditEntry` records both the original and the corrected payloads, linked to the original through `parent_bill_external_ref`. A reviewer reconstructing the chain sees exactly what was changed and on whose authority.
+
+**Consequences:** The human approval has teeth — once the reviewer hits approve, the corrected reading lands. The audit trail is intact: before-state, drafter proposal, after-state, and the parent linkage are all visible. The cost: the system trusts the human to read what they're approving (the drafter's `basis_note` and `confidence_note` exist exactly for this), and there is no automated re-check that the corrected unit matches the meter. If a future need arises to re-validate (e.g., a final "no overlaps" guard), that becomes a narrow check inside the approval handler — not a pipeline re-run. Approval and re-validation are decoupled; either can grow without entangling the other.
+
+---
+
 ## Spec gaps observed
 
 Gaps in [DESIGN.md](DESIGN.md) that surfaced during a build step and required either a decision or a clarification before proceeding. Per the ambiguity-handling rule in [CLAUDE.md](CLAUDE.md), inventing on ambiguous spec is forbidden — any gap encountered is logged here, optionally accompanied by a `TODO` in the code at the point of contact.

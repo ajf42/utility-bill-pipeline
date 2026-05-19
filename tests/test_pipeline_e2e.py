@@ -18,9 +18,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.db.fixtures import seed_fixtures
-from src.db.store import MeterHistoryStore
+from src.db.store import AuditLogStore, MeterHistoryStore
 from src.main import app
-from src.routes.dependencies import get_store
+from src.routes.dependencies import get_audit_store, get_drafter, get_store
 
 
 @pytest.fixture()
@@ -30,18 +30,29 @@ def seeded_client(tmp_path):
     seed_fixtures(seed)
     seed.close()
 
-    def _override():
+    def _store_override():
         store = MeterHistoryStore(db_path)
         try:
             yield store
         finally:
             store.close()
 
-    app.dependency_overrides[get_store] = _override
+    def _audit_override():
+        store = AuditLogStore(db_path)
+        try:
+            yield store
+        finally:
+            store.close()
+
+    app.dependency_overrides[get_store] = _store_override
+    app.dependency_overrides[get_audit_store] = _audit_override
+    app.dependency_overrides[get_drafter] = lambda: None
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(get_store, None)
+        app.dependency_overrides.pop(get_audit_store, None)
+        app.dependency_overrides.pop(get_drafter, None)
 
 
 def _liberty_main_clean() -> dict:
@@ -85,7 +96,7 @@ def test_clean_bill_produces_no_high_severity_flags(seeded_client):
     response = seeded_client.post("/bills", json=_liberty_main_clean())
     assert response.status_code == 200
     body = response.json()
-    assert body["pipeline_status"] == "validated"
+    assert body["pipeline_status"] == "triaged"
     validated = body["validated"]
 
     # Sanity: the meter resolved and prior context attached.
@@ -106,7 +117,7 @@ def test_dirty_bill_produces_unit_mismatch_and_gap_flags(seeded_client):
     response = seeded_client.post("/bills", json=_liberty_main_dirty())
     assert response.status_code == 200
     body = response.json()
-    assert body["pipeline_status"] == "validated"
+    assert body["pipeline_status"] == "triaged"
     validated = body["validated"]
 
     # Sanity: meter still resolved -- only the unit + gap are off.

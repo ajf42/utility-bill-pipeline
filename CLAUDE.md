@@ -31,7 +31,7 @@ The walkthrough audience is Matt Richardson, who owns Measurabl's back-office fu
 
 ## Current state
 
-**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: complete. Phase 3 — Triage, Drafter, Batch: in progress.** The repo runs the full single-row pipeline end-to-end through `POST /bills`: ingest → normalize → reconcile → validate. The Resolution Drafter Service exists as a standalone unit and is **not yet wired into the pipeline** — that wiring lands with the Triage service in the next Phase 3 prompt. `POST /bills` returns `pipeline_status: "validated"` with `raw_input`, `normalized`, `reconciled`, and `validated` artifacts attached. The e2e acceptance gate ([tests/test_pipeline_e2e.py](tests/test_pipeline_e2e.py)) covers the clean-bill no-HIGH-flags scenario and the dirty-bill UNIT_MISMATCH+GAP scenario against a fixture-seeded DB. Next up in Phase 3: Triage service (three-route decision logic, calls the Drafter on DraftForHumanReview), `POST /batches` XLSX handler, AuditEntry writes, and four sample scenarios in `samples/scenarios.md`.
+**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: complete. Phase 3 — Triage, Drafter, Batch: in progress.** The full single-row pipeline runs end-to-end through `POST /bills`: ingest → normalize → reconcile → validate → triage (with the Resolution Drafter wired in on the DraftForHumanReview route) → audit-log write. `POST /bills` returns `pipeline_status: "triaged"` with `audit_ref`, the per-stage artifacts, and the `TriageDecision` (including `drafter_output` when applicable). The human approval loop is closed: `POST /bills/{audit_ref}/approve` applies the drafter's `proposed_correction`, writes the resulting Reading with `source_mode=DRAFTER_APPROVED`, and records a linked follow-up audit entry; `POST /bills/{audit_ref}/reject` records a rejection with reason. The Anthropic client is constructed once at app startup (lifespan event in [src/main.py](src/main.py)) and injected through `get_drafter`. Next up in Phase 3: `POST /batches` XLSX handler, four sample scenarios in `samples/scenarios.md`.
 
 What exists:
 
@@ -39,7 +39,7 @@ What exists:
 - [DESIGN.md](DESIGN.md) — authoritative spec
 - [README.md](README.md) — skeleton with architecture diagram placeholder, quick start, walkthrough placeholder, status
 - [CLAUDE.md](CLAUDE.md) — this file
-- [DECISIONS.md](DECISIONS.md) — ADR-001 through ADR-011 plus a Spec gaps observed section
+- [DECISIONS.md](DECISIONS.md) — ADR-001 through ADR-012 plus a Spec gaps observed section
 - [TASKS.md](TASKS.md) — Phase 2–4 backlog; Phase 1 marked complete with commit references
 - pydantic v2 data models under `src/models/` (see Models below)
 - SQLite schema and stores under `src/db/` (see Persistence below)
@@ -57,15 +57,17 @@ What exists:
 - `tests/test_pipeline_e2e.py` — Phase 2 acceptance gate: 2 tests through the live FastAPI route against a fixture-seeded tmp DB. Clean bill → no HIGH-severity flags; dirty bill (therms on a kWh meter, 14-day gap) → UNIT_MISMATCH HIGH + GAP HIGH.
 - `tests/test_routes_bills.py` — 3 tests (TestClient) covering `GET /health`, the `POST /bills` validated-response shape with a METER_UNASSIGNED flag against the empty-store override, and the 422 boundary
 - `scripts/check_design_sync.py` + `tests/test_design_sync.py` — structural drift guard that parses DESIGN.md §8 at runtime and fails if any ≥12-word contiguous block from §8 also appears in CLAUDE.md (normalized comparison)
-- `src/models/drafter.py`, `src/prompts/drafter_system.md`, `src/services/drafter.py`, `tests/fakes.py`, `tests/test_drafter.py` — the standalone Resolution Drafter Service (see Drafter below). **Not yet wired into the pipeline.**
+- `src/models/drafter.py`, `src/prompts/drafter_system.md`, `src/services/drafter.py`, `tests/fakes.py`, `tests/test_drafter.py` — the Resolution Drafter Service (see Drafter below). Now wired into triage on the DraftForHumanReview route.
+- `src/services/triage.py` — the three-route Triage service (see Triage below). Calls the Drafter on DraftForHumanReview; degrades to Escalate with `DRAFTER_FAILURE` on drafter exceptions.
+- `tests/test_triage.py` — 11 tests covering routing logic (no-flags AutoResolve; one-MEDIUM AutoResolve; HIGH-only-fixable DraftForHumanReview; HIGH-non-fixable Escalate with mapped routing key; 3-MEDIUM Escalate; 2-MEDIUM DraftForHumanReview; unmatched-meter Escalate) plus drafter integration (drafter_output populated; DrafterParseError → DRAFTER_FAILURE; no-drafter warning path).
+- `tests/test_approval.py` — 6 tests including the Phase 3 e2e acceptance gate: ingest → normalize → reconcile → validate → triage (FakeAnthropicClient) → approve → persistence on a synthetic unit-mismatch bill. Plus approve/reject behavior, 404 on unknown audit_ref, 409 on AutoResolve, and the parent_bill_external_ref linkage carrying before/after payloads.
 
 What does **not** yet exist (Phase 3+):
 
-- Triage service (three-route decision logic), audit-log writer, output writer
-- `POST /batches` route (XLSX batch handler)
+- `POST /batches` route (XLSX batch handler) + batch summary report
 - Sample scenarios in `samples/scenarios.md`
 
-The next unit of work is the Triage service, which calls the Drafter on the DraftForHumanReview route. See [TASKS.md](TASKS.md) Phase 3 for the full ordered list.
+The next unit of work is the XLSX batch handler. See [TASKS.md](TASKS.md) Phase 3 for the full ordered list.
 
 ### Models
 
@@ -76,6 +78,7 @@ The pydantic models are the contracts every downstream stage and the audit log c
 - [src/models/quality.py](src/models/quality.py) — `QualityFlag` and `TriageDecision`, plus the enums `Severity`, `FlagType`, `RoutingKey`, `TriageRoute`.
 - [src/models/audit.py](src/models/audit.py) — `AuditEntry`, the full lineage record persisted per bill.
 - [src/models/drafter.py](src/models/drafter.py) — `DrafterOutput` plus the enums `ProposedAction` and `EmailRecipientType`. The output contract for the Resolution Drafter Service; fields cover `proposed_action`, `proposed_correction` (machine-applicable partial override, empty when human input is required first), the drafted email triple (`subject`, `body`, `recipient_type`), `basis_note`, and `confidence_note` (required — uses the literal "no uncertainty noted" when none).
+- `AuditEntry` (extended this prompt) — gains `parent_bill_external_ref: Optional[str]` linking follow-up entries (approval/rejection) back to the original triaged entry, and `drafter_output: Optional[DrafterOutput]` so the drafter's proposal is preserved on the audit row independently of the TriageDecision. `SourceMode` (extended this prompt) gains `DRAFTER_APPROVED`, the source mode written on readings that landed via the approval flow. `TriageDecision` (extended this prompt) now carries `drafter_output: Optional[DrafterOutput]` in place of the previous loose `drafted_resolution: dict`. `RoutingKey` (extended this prompt) gains `DRAFTER_FAILURE`; `FlagType` gains a matching `DRAFTER_FAILURE` so the drafter-exception flag attached on degradation has a typed home.
 
 ### Persistence
 
@@ -101,17 +104,21 @@ In-memory, no DB and no FastAPI deps. Downstream services (normalization, valida
 
 FastAPI app, no middleware / auth / CORS. Run locally with `uvicorn src.main:app --reload`.
 
-- [src/main.py](src/main.py) — instantiates `FastAPI(title="Utility Bill Pipeline", version="0.2.0")`, mounts the bills router, exposes `GET /health` returning `{"status": "ok", "version": "0.2.0"}`.
-- [src/routes/bills.py](src/routes/bills.py) — `POST /bills` handler. Accepts a loose `dict` body, runs ingest → normalize → reconcile → validate, returns `{"raw_input": <RawBillInput>, "normalized": <NormalizedBill>, "reconciled": <ReconciledBill>, "validated": <ValidatedBill>, "pipeline_status": "validated"}`. The store is injected via `Depends(get_store)`. `ValueError` from ingestion maps to HTTP 422; the post-ingestion stages never raise (per ADR-003 / DESIGN.md §4) so no extra boundary handling is needed. Triage and audit will extend this response shape in Phase 3.
-- [src/routes/dependencies.py](src/routes/dependencies.py) — `get_store()` FastAPI generator dependency. Opens a `MeterHistoryStore` against `$DB_PATH` (default `./prototype.db`) per request, yields it, closes on teardown. Tests override via `app.dependency_overrides[get_store] = ...` to point at a tmp-path DB.
+- [src/main.py](src/main.py) — instantiates `FastAPI(title="Utility Bill Pipeline", version="0.3.0", lifespan=_lifespan)`, mounts the bills router, exposes `GET /health` returning `{"status": "ok", "version": "0.3.0"}`. The lifespan handler reads `ANTHROPIC_API_KEY` from the environment at startup (never from code) and installs a `DrafterService` via `set_drafter`; when the key is unset the app still boots and a warning is logged.
+- [src/routes/bills.py](src/routes/bills.py) — three endpoints. `POST /bills` runs the full pipeline ingest → normalize → reconcile → validate → triage, records an AuditEntry, returns `{"audit_ref", "raw_input", "normalized", "reconciled", "validated", "triage", "pipeline_status": "triaged"}` where `triage` includes `drafter_output` when present. `POST /bills/{audit_ref}/approve` looks up the original entry, applies `drafter_output.proposed_correction` to a copy of `raw_payload` (validated against the known reading-level field set), constructs a Reading, persists it with `source_mode=DRAFTER_APPROVED`, and writes a follow-up audit entry linked via `parent_bill_external_ref` carrying both the original and corrected payloads. Returns `{"reading_id", "audit_ref"}`. 404 on unknown ref, 409 on non-DraftForHumanReview routes, 422 when `drafter_output` is missing or the correction names unknown fields or the matched_meter snapshot is absent. `POST /bills/{audit_ref}/reject` writes a rejection follow-up audit entry with an optional `rejection_reason` body field; no Reading is written. Approval does NOT re-run validation on the corrected bill — see ADR-012.
+- [src/routes/dependencies.py](src/routes/dependencies.py) — three FastAPI generator dependencies. `get_store()` and `get_audit_store()` each open a per-request connection against `$DB_PATH` (default `./prototype.db`); both close on teardown. `get_drafter()` returns the singleton `DrafterService | None` installed by `set_drafter()` at app startup. Tests override all three via `app.dependency_overrides[...]` to point at tmp-path DBs and a `FakeAnthropicClient`-backed drafter.
 - [src/services/ingestion.py](src/services/ingestion.py) — `ingest_json_row(payload: dict) -> RawBillInput`. Validates presence of the seven required fields (`period_start`, `period_end`, `usage`, `usage_units`, `meter_id_string`, `account_number`, `site_name`) and constructs a `RawBillInput` with `source_mode=JSON_ROW` and `batch_id=None`. Field parsing and canonicalization belong to normalization, not here. Payload is shallow-copied so caller mutations don't reach the artifact.
 - [src/services/normalization.py](src/services/normalization.py) — `normalize(raw_input: RawBillInput) -> NormalizedBill`. Parses ISO dates, canonicalizes the unit string case-insensitively against the `Unit` enum, extracts the provider alias from the `MSR.(provider)(account):(meter)` convention and looks it up in the reference library, ISO-4217-shape-checks the currency (defaults to the regional currency when absent if the provider is known), and emits structural signals under the categories DESIGN.md §4 names: `field_type_valid`, `value_in_range`, `provider_known`, `provider_alias_parsed`, `unit_known`, `cross_field_agreement`. Per ADR-003 / ADR-008 every leaf is a plain boolean; inapplicable per-field checks are omitted from their sub-dict, inapplicable cross-field checks default to `False`. The service never raises on bad data — failures are recorded as `False` signals. Module-level constants pin the plausible-range thresholds (`_BILLING_PERIOD_MIN_DAYS=25`, `_BILLING_PERIOD_MAX_DAYS=35`).
 - [src/services/reconciliation.py](src/services/reconciliation.py) — `reconcile(normalized: NormalizedBill, store: MeterHistoryStore, *, prior_readings_limit: int = 12) -> ReconciledBill`. Resolves the three-key triple (`meter_id_string`, `account_number`, `site_name`) against the store; on hit, fetches the last N prior readings and the parent account (via `store.get_account`) and computes `prior_context = {prior_period_end, count_of_prior_readings}`; on miss, returns a `ReconciledBill` with `matched_meter=None`, `matched_account=None`, `prior_readings=[]`, and zeroed prior_context. Never raises on miss — the "no match" case is a valid pipeline outcome that triggers `meter_unassigned` escalation downstream. Stateless beyond the injected store; does not open connections itself. The default 12 is `DEFAULT_PRIOR_READINGS_LIMIT` at module scope.
 - [src/services/validation.py](src/services/validation.py) — `validate(reconciled: ReconciledBill) -> ValidatedBill`. Runs schema checks (period_start strictly before period_end → `FORMAT_INVALID`), structural checks against `matched_meter` (`UNIT_MISMATCH`, `CURRENCY_MISMATCH`, `INACTIVE_METER`), structural checks against `matched_account` (`GENERATION_MISMATCH` for `energy_exported > 0` on a non-generation account), and the two domain heuristics with prior context (`GAP`: ≤2 days no flag / 2–7 days MEDIUM / >7 days HIGH; `OVERLAP`: any prior-period intersection HIGH). When `matched_meter` is None, emits exactly one HIGH `METER_UNASSIGNED` flag (plus any schema-level format issues); all matched-meter / matched-account / prior-context checks short-circuit naturally. Never raises. Thresholds (`_GAP_MEDIUM_DAYS=2`, `_GAP_HIGH_DAYS=7`) are module-level constants. The `name_mismatch` check from DESIGN.md §4 is intentionally omitted — strict three-key `find_meter` makes a site-name disagreement an unmatched-meter case, so the check is unreachable; see DECISIONS.md "Spec gaps observed".
 
+### Triage
+
+- [src/services/triage.py](src/services/triage.py) — `TriageService(drafter: DrafterService | None = None)` with a single public method `triage(validated: ValidatedBill) -> TriageDecision`. Routes per DESIGN.md §4: unmatched meter → Escalate(METER_UNASSIGNED); any HIGH flag → Escalate (routing key picked from the first HIGH via `_HIGH_FLAG_TO_ROUTING_KEY`, fallback UNCATEGORIZED) UNLESS every HIGH flag is in `_FIXABLE_HIGH_FLAG_TYPES = {UNIT_MISMATCH}` in which case → DraftForHumanReview; ≥3 MEDIUM → Escalate(UNCATEGORIZED); 2 MEDIUM → DraftForHumanReview; else → AutoResolve. On the DraftForHumanReview route, calls `drafter.draft(validated, meter, prior_readings)` if a drafter is attached; any exception (notably `DrafterParseError`) is caught, the route degrades to Escalate(DRAFTER_FAILURE), and a `FlagType.DRAFTER_FAILURE` flag carrying the exception type and message is appended to `validated.flags` (mutation of the pipeline's in-memory artifact, so the audit log preserves the failure mode). When `drafter is None` on a draft route, returns `drafter_output=None` and emits a logger warning — a test-friendly mode, not a production one.
+
 ### Drafter
 
-Standalone (not yet wired into the pipeline). Triage will call this on the DraftForHumanReview route in the next Phase 3 prompt.
+Wired into triage on the DraftForHumanReview route. Anthropic client built once at FastAPI startup, injected via `get_drafter`.
 
 - [src/services/drafter.py](src/services/drafter.py) — `DrafterService(client, model="claude-sonnet-4-6", system_prompt_path, max_tokens=1024)`. Single public method `draft(validated_bill, meter, prior_readings) -> DrafterOutput`. Forces structured output via Anthropic's tool-use mechanism (see ADR-010): tool name `draft_resolution`, `input_schema` derived from `DrafterOutput.model_json_schema()`, `tool_choice={"type": "tool", "name": "draft_resolution"}`. Parses the `tool_use` block on response; any parse failure (no tool_use, non-dict input, pydantic validation error) raises `DrafterParseError` with the raw response attached — fail-loud per ADR-011, no retries. Module-level helper `build_drafter_user_message(bill, meter, history)` renders the structured user message with section headers (Incoming bill / Matched meter / Quality flags / Recent readings).
 - [src/prompts/drafter_system.md](src/prompts/drafter_system.md) — the drafter's system prompt as a standalone markdown file (see ADR-009 for the in-file rationale). Frames the model as a drafting assistant, names the human as the gate, instructs the model to leave `proposed_correction` empty when it cannot safely self-correct, includes two short example outputs (unit-mismatch and meter-confusion), and ends with the literal "Always call the draft_resolution tool. Never respond outside it." Read at `DrafterService` construction time.
@@ -153,6 +160,7 @@ utility-bill-pipeline/
       reconciliation.py
       validation.py
       drafter.py
+      triage.py
     routes/
       __init__.py
       bills.py
@@ -173,6 +181,8 @@ utility-bill-pipeline/
     test_pipeline_e2e.py
     test_routes_bills.py
     test_drafter.py
+    test_triage.py
+    test_approval.py
     test_design_sync.py
   scripts/
     check_design_sync.py

@@ -8,9 +8,11 @@ three-route model and the routing-key escalation taxonomy.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel
+
+from .drafter import DrafterOutput
 
 
 class Severity(str, Enum):
@@ -33,6 +35,7 @@ class FlagType(str, Enum):
     GENERATION_MISMATCH = "GENERATION_MISMATCH"
     METER_UNASSIGNED = "METER_UNASSIGNED"
     FORMAT_INVALID = "FORMAT_INVALID"
+    DRAFTER_FAILURE = "DRAFTER_FAILURE"
 
 
 class QualityFlag(BaseModel):
@@ -61,6 +64,7 @@ class RoutingKey(str, Enum):
     OVERLAP = "OVERLAP"
     FORMAT_MISMATCH = "FORMAT_MISMATCH"
     INACTIVE_METER = "INACTIVE_METER"
+    DRAFTER_FAILURE = "DRAFTER_FAILURE"
     UNCATEGORIZED = "UNCATEGORIZED"
 
 
@@ -75,12 +79,13 @@ class TriageRoute(str, Enum):
 class TriageDecision(BaseModel):
     """The triage service's per-bill output.
 
-    ``routing_key`` is set only on the Escalate route. ``drafted_resolution``
-    is set only on the DraftForHumanReview route and carries the Resolution
-    Drafter Service's output (proposed action, drafted email, basis note).
+    ``routing_key`` is set only on the Escalate route. ``drafter_output``
+    is set only on the DraftForHumanReview route (when a Drafter was
+    attached to the triage service) and carries the structured Resolution
+    Drafter Service output: proposed action, drafted email, basis note.
     """
 
     route: TriageRoute
     routing_key: Optional[RoutingKey] = None
     reasoning: str
-    drafted_resolution: Optional[dict[str, Any]] = None
+    drafter_output: Optional[DrafterOutput] = None

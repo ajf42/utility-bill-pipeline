@@ -18,10 +18,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.db.fixtures import seed_fixtures
-from src.db.store import MeterHistoryStore
+from src.db.store import AuditLogStore, MeterHistoryStore
 from src.main import app
 from src.models.bill import NormalizedBill, RawBillInput, SourceMode
-from src.routes.dependencies import get_store
+from src.routes.dependencies import get_audit_store, get_drafter, get_store
 from src.services.normalization import normalize
 from src.services.reconciliation import reconcile
 
@@ -55,18 +55,29 @@ def seeded_client(tmp_path):
     seed_fixtures(seed_store)
     seed_store.close()
 
-    def _override():
+    def _store_override():
         store = MeterHistoryStore(db_path)
         try:
             yield store
         finally:
             store.close()
 
-    app.dependency_overrides[get_store] = _override
+    def _audit_override():
+        store = AuditLogStore(db_path)
+        try:
+            yield store
+        finally:
+            store.close()
+
+    app.dependency_overrides[get_store] = _store_override
+    app.dependency_overrides[get_audit_store] = _audit_override
+    app.dependency_overrides[get_drafter] = lambda: None
     try:
         yield TestClient(app)
     finally:
         app.dependency_overrides.pop(get_store, None)
+        app.dependency_overrides.pop(get_audit_store, None)
+        app.dependency_overrides.pop(get_drafter, None)
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +212,7 @@ def test_post_bills_known_meter_returns_matched_with_priors(seeded_client):
     response = seeded_client.post("/bills", json=_liberty_main_payload())
     assert response.status_code == 200
     body = response.json()
-    assert body["pipeline_status"] == "validated"
+    assert body["pipeline_status"] == "triaged"
     reconciled = body["reconciled"]
     assert reconciled["matched_meter"] is not None
     assert (

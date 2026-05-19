@@ -23,6 +23,7 @@ class SourceMode(str, Enum):
 
     JSON_ROW = "JSON_ROW"
     XLSX_ROW = "XLSX_ROW"
+    DRAFTER_APPROVED = "DRAFTER_APPROVED"
 
 
 class RawBillInput(BaseModel):

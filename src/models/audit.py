@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from .drafter import DrafterOutput
 from .quality import QualityFlag, TriageDecision
 
 
@@ -29,6 +30,7 @@ class AuditEntry(BaseModel):
 
     id: Optional[int] = None
     bill_external_ref: str
+    parent_bill_external_ref: Optional[str] = None
     batch_id: Optional[str] = None
     timestamp: datetime
     source_mode: str
@@ -37,4 +39,5 @@ class AuditEntry(BaseModel):
     reconciliation_result: dict[str, Any] = Field(default_factory=dict)
     flags: list[QualityFlag] = Field(default_factory=list)
     triage_decision: TriageDecision
+    drafter_output: Optional[DrafterOutput] = None
     output_payload: Optional[dict[str, Any]] = None
