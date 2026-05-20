@@ -13,6 +13,7 @@ ADR-011).
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,9 @@ import anthropic
 from src.models.bill import ValidatedBill
 from src.models.drafter import DrafterOutput
 from src.models.entities import Meter, Reading
+from src.util.logging import get_logger, log_with_context
+
+_logger = get_logger("drafter")
 
 _DEFAULT_SYSTEM_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "drafter_system.md"
 _TOOL_NAME = "draft_resolution"
@@ -148,7 +152,29 @@ class DrafterService:
             tool_choice={"type": "tool", "name": _TOOL_NAME},
             messages=[{"role": "user", "content": user_message}],
         )
+        _log_api_response(response, model=self._model)
         return _parse_tool_use(response)
+
+
+def _log_api_response(response: Any, *, model: str) -> None:
+    """Emit a structured log line summarizing the Anthropic API response.
+
+    Reads ``response.usage`` if present (the Anthropic SDK exposes input
+    and output token counts there). Failures are swallowed — logging
+    must never break the pipeline.
+    """
+    usage = getattr(response, "usage", None)
+    context: dict[str, Any] = {"stage": "drafter", "model": model}
+    if usage is not None:
+        for attr in ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+                     "cache_read_input_tokens"):
+            value = getattr(usage, attr, None)
+            if value is not None:
+                context[attr] = value
+    stop_reason = getattr(response, "stop_reason", None)
+    if stop_reason is not None:
+        context["stop_reason"] = stop_reason
+    log_with_context(_logger, logging.INFO, "anthropic_response", **context)
 
 
 def _parse_tool_use(response: Any) -> DrafterOutput:

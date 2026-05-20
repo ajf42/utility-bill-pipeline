@@ -271,6 +271,10 @@ class MeterHistoryStore:
         ).fetchone()
         return _meter_from_row(row) if row else None
 
+    def readings_count(self) -> int:
+        (n,) = self._conn.execute("SELECT COUNT(*) FROM readings").fetchone()
+        return n
+
     def get_prior_readings(self, meter_id: int, limit: int = 12) -> list[Reading]:
         rows = self._conn.execute(
             """
@@ -338,3 +342,61 @@ class AuditLogStore:
             (batch_id,),
         ).fetchall()
         return [_audit_from_row(r) for r in rows]
+
+    def count(self) -> int:
+        (n,) = self._conn.execute("SELECT COUNT(*) FROM audit_entries").fetchone()
+        return n
+
+    def last_write_at(self) -> Optional[datetime]:
+        row = self._conn.execute(
+            "SELECT timestamp FROM audit_entries ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+        return datetime.fromisoformat(row["timestamp"])
+
+    def counts_by_route_since(self, cutoff: datetime) -> dict[str, int]:
+        rows = self._conn.execute(
+            "SELECT triage_route, COUNT(*) AS n FROM audit_entries "
+            "WHERE timestamp >= ? GROUP BY triage_route",
+            (cutoff.isoformat(),),
+        ).fetchall()
+        return {r["triage_route"]: r["n"] for r in rows}
+
+    def count_pending_drafted(self) -> int:
+        """Count DraftForHumanReview entries whose drafter_output is set
+        and which have no approve/reject follow-up audit entry.
+
+        ``parent_bill_external_ref`` is the link a follow-up uses to
+        point back at the original — querying the JSON payload directly
+        is fine for the prototype (no scale, no index). At scale this
+        becomes a denormalized column with an index; the production
+        story is in the scale doc.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT bill_external_ref, payload_json FROM audit_entries
+            WHERE triage_route = 'DRAFT_FOR_HUMAN_REVIEW'
+            """
+        ).fetchall()
+        pending = 0
+        for r in rows:
+            entry = AuditEntry.model_validate_json(r["payload_json"])
+            if entry.drafter_output is None:
+                continue
+            # Follow-up entries carry parent_bill_external_ref; skip them
+            # because they describe a completed approval/rejection, not
+            # a pending draft.
+            if entry.parent_bill_external_ref is not None:
+                continue
+            followups = self._conn.execute(
+                """
+                SELECT 1 FROM audit_entries
+                WHERE payload_json LIKE ?
+                LIMIT 1
+                """,
+                (f'%"parent_bill_external_ref":"{entry.bill_external_ref}"%',),
+            ).fetchone()
+            if followups is None:
+                pending += 1
+        return pending

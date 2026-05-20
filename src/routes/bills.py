@@ -33,6 +33,9 @@ from src.services.normalization import normalize
 from src.services.reconciliation import reconcile
 from src.services.triage import TriageService
 from src.services.validation import validate
+from src.util.logging import StageTimer, get_logger
+
+_logger = get_logger("pipeline")
 
 router = APIRouter()
 
@@ -68,17 +71,29 @@ def post_bill(
     approve/reject calls use to locate this bill's audit row.
     """
 
+    audit_ref = str(uuid.uuid4())
+
     try:
         raw_input = ingest_json_row(payload)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    normalized = normalize(raw_input)
-    reconciled = reconcile(normalized, store)
-    validated = validate(reconciled)
-    decision = TriageService(drafter=drafter).triage(validated)
-
-    audit_ref = str(uuid.uuid4())
+    with StageTimer(_logger, stage="normalize", bill_ref=audit_ref) as t:
+        normalized = normalize(raw_input)
+        t.set(provider_known=normalized.structural_signals.get("provider_known"))
+    with StageTimer(_logger, stage="reconcile", bill_ref=audit_ref) as t:
+        reconciled = reconcile(normalized, store)
+        t.set(matched_meter=reconciled.matched_meter is not None)
+    with StageTimer(_logger, stage="validate", bill_ref=audit_ref) as t:
+        validated = validate(reconciled)
+        t.set(flag_count=len(validated.flags))
+    with StageTimer(_logger, stage="triage", bill_ref=audit_ref) as t:
+        decision = TriageService(drafter=drafter).triage(validated)
+        t.set(
+            route=decision.route.value,
+            routing_key=decision.routing_key.value if decision.routing_key else None,
+            drafter_called=decision.drafter_output is not None,
+        )
     entry = AuditEntry(
         bill_external_ref=audit_ref,
         batch_id=raw_input.batch_id,
@@ -125,8 +140,19 @@ def approve_bill(
     original payloads so a reviewer can reconstruct what changed.
     """
 
+    with StageTimer(_logger, stage="approval", bill_ref=audit_ref) as timer:
+        return _approve_bill_impl(audit_ref, store, audit_store, timer)
+
+
+def _approve_bill_impl(
+    audit_ref: str,
+    store: MeterHistoryStore,
+    audit_store: AuditLogStore,
+    timer: StageTimer,
+) -> dict[str, Any]:
     original = _load_original_entry(audit_store, audit_ref)
     if original.triage_decision.route is not TriageRoute.DRAFT_FOR_HUMAN_REVIEW:
+        timer.set(outcome="rejected:wrong_route")
         raise HTTPException(
             status_code=409,
             detail=(
@@ -203,6 +229,7 @@ def approve_bill(
     )
     audit_store.record(followup)
 
+    timer.set(outcome="approved", reading_id=reading_id, followup_audit_ref=followup_ref)
     return {"reading_id": reading_id, "audit_ref": followup_ref}
 
 

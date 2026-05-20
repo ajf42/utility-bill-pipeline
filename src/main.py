@@ -15,10 +15,15 @@ from fastapi import FastAPI
 
 from src.routes.bills import router as bills_router
 from src.routes.dependencies import set_drafter
+from src.routes.status import router as status_router
+from src.util.logging import configure_logging
 
 API_VERSION = "0.3.0"
 
 _logger = logging.getLogger(__name__)
+
+
+configure_logging()
 
 
 @asynccontextmanager
@@ -51,6 +56,7 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Utility Bill Pipeline", version=API_VERSION, lifespan=_lifespan)
 app.include_router(bills_router)
+app.include_router(status_router)
 
 
 @app.get("/health")

@@ -45,19 +45,48 @@ The same six cases are documented in [WALKTHROUGH.md](WALKTHROUGH.md) for reader
 
 ---
 
-## Read the design
+## How to read this repo
 
-Three documents carry the reasoning behind the build. They are deliberately separated by audience and lifecycle:
+In order, depending on how much depth you want:
+
+1. **This README** — what the project is, how to run it. ~60 seconds.
+2. **[WALKTHROUGH.md](WALKTHROUGH.md)** — six canonical bills walked end-to-end, narrated for an operations reader. ~10 minutes.
+3. **[DESIGN.md](DESIGN.md)** — the authoritative spec. Architecture, build plan, scope, what was deliberately cut and why. ~25 minutes.
+4. **[DECISIONS.md](DECISIONS.md)** — every significant architectural choice as an ADR with rationale and alternatives. Skim the headings; depth-read the ones that catch your eye.
+5. **The code** — start at [src/main.py](src/main.py), follow the routes, services, and stores. [CLAUDE.md](CLAUDE.md) is the live map of what exists where.
+
+## Decisions of note
+
+A short list of ADRs that best represent the architectural reasoning in this build:
+
+- **[ADR-003](DECISIONS.md#adr-003--structural-only-confidence-model-no-llm-self-reported-confidence)** — Structural-only confidence model. The system never trusts an LLM's self-reported confidence. Confidence comes from observable checks (type, range, reference-library presence, cross-field agreement). This is the single most load-bearing decision in the build for the audience and the problem.
+- **[ADR-007](DECISIONS.md#adr-007--stdlib-sqlite3-for-persistence-not-an-orm)** — Stdlib `sqlite3`, no ORM. Walking a reader through `store.py` is walking them through SQL, which is the point.
+- **[ADR-009](DECISIONS.md#adr-009--drafter-system-prompt-lives-in-a-markdown-file-not-in-python)** — The drafter system prompt lives in a markdown file, not in Python. Editing it is a content change, not a code change; it reviews cleanly in `git diff`.
+- **[ADR-010](DECISIONS.md#adr-010--drafter-uses-anthropic-tool-use-to-force-structured-output)** — Drafter uses Anthropic tool-use to force structured output. Schema enforcement on the server side, pydantic at the boundary, and a single tool name to anchor the system prompt.
+- **[ADR-012](DECISIONS.md#adr-012--approval-applies-the-correction-directly-it-does-not-re-run-validation)** — Approval does not re-run validation. The human is the gate; re-running would loop the corrected bill back into the same flag.
+
+## Phase status
+
+| Phase | Status |
+|---|---|
+| Phase 1 — Foundation (repo + schema + fixtures + methodology) | Complete |
+| Phase 2 — Single-Row Pipeline (ingest → normalize → reconcile → validate) | Complete |
+| Phase 3 — Triage, Drafter, Demo harness, Logging, /status | Complete |
+| Phase 4 — Walkthrough prep | In progress |
+
+The XLSX batch endpoint (originally Phase 3) is moved to the scale-to-production companion document — the architectural lesson it would teach (queue-based fan-out, per-row idempotency, batch summary aggregation) is treated better there than rushed into the prototype. Everything cut from the prototype is named in DESIGN.md §5 with the engineering treatment it receives in the scale doc.
+
+## Reference docs
 
 | Document | Audience | Purpose |
 |---|---|---|
-| [DESIGN.md](DESIGN.md) | engineering | The authoritative spec. Architecture, decisions, build plan. Changes deliberately. |
-| [WALKTHROUGH.md](WALKTHROUGH.md) | operations + portfolio readers | Six canonical bills explained case by case. Mirrors the demo harness. |
-| [DECISIONS.md](DECISIONS.md) | engineering + audit reader | ADRs for every significant choice, with rationale and alternatives. |
-| [CLAUDE.md](CLAUDE.md) | the next engineer | Working memory: what exists right now, what the rules are. Updated every commit. |
-| [TASKS.md](TASKS.md) | the next engineer | Live backlog with commit hashes. One task per commit. |
+| [DESIGN.md](DESIGN.md) | engineering | Authoritative spec. Architecture, decisions, build plan. Changes deliberately. |
+| [WALKTHROUGH.md](WALKTHROUGH.md) | operations + portfolio | Six canonical bills explained case by case. Mirrors the demo harness. |
+| [DECISIONS.md](DECISIONS.md) | engineering + audit reader | ADRs for every significant choice. |
+| [CLAUDE.md](CLAUDE.md) | the next engineer | Working memory: what exists right now. Updated every commit. |
+| [TASKS.md](TASKS.md) | the next engineer | Live backlog with commit hashes. |
 
-A companion **scale-to-production document** is drafted alongside this prototype and takes every feature that was deliberately cut (PDF extraction, AutoEstimate triage, statistical anomaly detection, the tariff-aware reference store, multi-tenant isolation, real auth and queues) and articulates what it becomes at tens of thousands of bills per month, distributed teams, real persistence, real observability, real SLAs. That document is the artifact that signals enterprise-grade thinking; this repository is the spine the scale doc points back at.
+A companion **scale-to-production document** is drafted alongside this prototype and takes every cut feature (PDF extraction, AutoEstimate, statistical anomaly detection, the tariff-aware reference store, multi-tenant isolation, real auth/queues, the XLSX batch path) and articulates what it becomes at tens of thousands of bills per month with distributed teams. That document is the artifact that signals enterprise-grade thinking; this repository is the spine the scale doc points back at.
 
 ---
 
@@ -69,8 +98,13 @@ The methodology artifacts ([CLAUDE.md](CLAUDE.md), [DECISIONS.md](DECISIONS.md),
 
 ---
 
-## Status
+## Operational visibility
 
-Phase 3 — Triage, Drafter, and the human-approval loop are wired and tested. The demonstration harness ([scripts/demo.py](scripts/demo.py)) and the walkthrough document ([WALKTHROUGH.md](WALKTHROUGH.md)) are in place. Remaining for Phase 3: the XLSX batch endpoint. Phase 4 — walkthrough prep — is next.
+Two endpoints surface the operational shape:
+
+- **`GET /health`** — simple liveness probe. Returns `{"status": "ok", "version": ...}`.
+- **`GET /status`** — read-only operational snapshot. Audit counts in the last 24h by triage route, pending drafted-for-review queue depth, last write timestamp, and whether the Anthropic key is configured (boolean — never the value).
+
+Every pipeline stage emits a structured JSON log line to stdout (timestamp, level, service, stage, bill_ref, outcome, duration_ms). The drafter additionally logs the Anthropic model and the per-call token usage. The prototype uses stdlib `logging` plus a small JSON formatter — production observability (metrics, traces, sinks, correlation IDs) is treated in the scale-to-production document.
 
 See [TASKS.md](TASKS.md) for the live backlog and [CLAUDE.md](CLAUDE.md) for what currently exists.

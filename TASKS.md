@@ -37,14 +37,14 @@ Verbatim from [DESIGN.md](DESIGN.md) §6.
 - [x] Structural checks (unit/currency/name/inactive) — commit `services: add validation service ...` (same commit; `name_mismatch` omitted with a spec-gap note — unreachable under strict three-key reconciliation)
 - [x] Tests for each service — commit `services: add validation service ...` (per-service test files landed alongside their services across Prompts 1–5; the validation tests and the Phase 2 e2e acceptance gate land in this commit)
 
-## Phase 3 — Triage, Drafter, Batch
+## Phase 3 — Triage, Drafter, Batch  **(complete)**
 
-Verbatim from [DESIGN.md](DESIGN.md) §6.
+Verbatim from [DESIGN.md](DESIGN.md) §6. The XLSX batch sub-items are explicitly deferred to the scale-to-production doc and recorded with the `[~]` marker. The remaining unchecked Phase 3 items are themselves superseded by [WALKTHROUGH.md](WALKTHROUGH.md) + [scripts/demo_bills.json](scripts/demo_bills.json) (per-scenario markdown) and by the structured-logging / `/status` work landed at the end of Phase 3.
 
 - [x] Triage service with three-route decision logic — commit `94316df` ( also wires the Drafter and adds approve/reject endpoints in the same commit).
 - [x] Resolution Drafter Service (single Claude call, structured output) — standalone build (not yet wired into the pipeline; wiring lands with the Triage service). Commit `1b1ce8a`.
-- [ ] `POST /batches` endpoint with simplified XLSX template parser — commit `________`
-- [ ] Batch summary report assembly — commit `________`
+- [~] `POST /batches` endpoint with simplified XLSX template parser — **deferred to scale-to-production**. The single-row pipeline already exercises every architectural concern the batch path would (queue-based fan-out, per-row idempotency, batch summary aggregation are scale concerns treated properly in the scale doc).
+- [~] Batch summary report assembly — **deferred to scale-to-production** (same reasoning).
 - [x] AuditEntry writes to SQLite — commit `94316df` (landed with the triage wiring; original + follow-up entries linked via `parent_bill_external_ref`).
 - [x] 4 sample scenarios constructed and documented in `samples/scenarios.md` — covered in spirit by the six canonical bills in [scripts/demo_bills.json](scripts/demo_bills.json) + [WALKTHROUGH.md](WALKTHROUGH.md); commit `8f3643b`. The lighter `samples/scenarios.md` file remains open if a separate per-scenario markdown is wanted later.
 - [x] Tests for triage logic with explicit expected decisions — commit `94316df` ( tests/test_triage.py + tests/test_approval.py landed together with the triage service).

@@ -31,7 +31,7 @@ The walkthrough audience is Matt Richardson, who owns Measurabl's back-office fu
 
 ## Current state
 
-**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: complete. Phase 3 — Triage, Drafter, Batch: in progress.** The full single-row pipeline runs end-to-end through `POST /bills`: ingest → normalize → reconcile → validate → triage (with the Resolution Drafter wired in on the DraftForHumanReview route) → audit-log write. The human approval loop is closed via `POST /bills/{audit_ref}/approve` and `POST /bills/{audit_ref}/reject`. A canonical-bill demonstration harness ([scripts/demo.py](scripts/demo.py) + [scripts/demo_bills.json](scripts/demo_bills.json)) walks six curated bills through the live API end-to-end and prints a summary table; [WALKTHROUGH.md](WALKTHROUGH.md) mirrors the same six cases as a standalone portfolio document. Fixtures gained two meters to support demo cases: an inactive ConEd meter (active=False, one historical reading) for the INACTIVE_METER case and an unknown-provider gas meter (`MSR.(GreenfieldCoop)(LT-GAS-002):(M2)`, four monthly readings) for the unknown-provider case — counts are now 3 sites / 5 accounts / 10 meters / 39 readings. Next up in Phase 3: `POST /batches` XLSX handler.
+**Phase 1 — Foundation: complete. Phase 2 — Single-Row Pipeline: complete. Phase 3 — Triage, Drafter, Demo harness, Observability: complete.** The full single-row pipeline runs end-to-end through `POST /bills`: ingest → normalize → reconcile → validate → triage (with the Resolution Drafter wired in on the DraftForHumanReview route) → audit-log write. The human approval loop is closed via `POST /bills/{audit_ref}/approve` and `POST /bills/{audit_ref}/reject`. A canonical-bill demonstration harness ([scripts/demo.py](scripts/demo.py) + [scripts/demo_bills.json](scripts/demo_bills.json)) walks six curated bills through the live API end-to-end and prints a summary table; [WALKTHROUGH.md](WALKTHROUGH.md) mirrors the same six cases as a standalone portfolio document. Operational surface: structured JSON logging via [src/util/logging.py](src/util/logging.py) (stdlib only, no structlog) and `GET /status` ([src/routes/status.py](src/routes/status.py)) for ops visibility — audit counts in the last 24h by triage route, pending drafted queue depth, last write timestamp, Anthropic key boolean. The XLSX batch endpoint is deferred to the scale-to-production document. Phase 4 (walkthrough dry-run) is next.
 
 What exists:
 
@@ -64,13 +64,14 @@ What exists:
 
 - [scripts/demo.py](scripts/demo.py) + [scripts/demo_bills.json](scripts/demo_bills.json) — the canonical-bill demonstration harness (see Demo harness below).
 - [WALKTHROUGH.md](WALKTHROUGH.md) — case-by-case narrative for the same six bills, suitable for portfolio readers.
+- [src/util/logging.py](src/util/logging.py) + [src/routes/status.py](src/routes/status.py) + [tests/test_status.py](tests/test_status.py) — structured-logging utility (stdlib JSON formatter, `StageTimer` context manager, `get_logger`, `log_with_context`) plus the `GET /status` operational endpoint. See Observability below.
 
-What does **not** yet exist (Phase 3+):
+What does **not** yet exist (deferred to scale-to-production):
 
-- `POST /batches` route (XLSX batch handler) + batch summary report
-- Sample scenarios in `samples/scenarios.md` (the demo harness + WALKTHROUGH.md cover the demonstrable scenarios; `samples/scenarios.md` is the lighter-weight TASKS.md item that remains open)
+- `POST /batches` route (XLSX batch handler) + batch summary report — deferred; the scale doc covers queue-based fan-out and per-row idempotency properly. The single-row pipeline already exercises every architectural concern the batch path would (fan-out at the route layer is the only addition).
+- Sample scenarios in `samples/scenarios.md` — superseded by [WALKTHROUGH.md](WALKTHROUGH.md) and [scripts/demo_bills.json](scripts/demo_bills.json).
 
-The next unit of work is the XLSX batch handler. See [TASKS.md](TASKS.md) Phase 3 for the full ordered list.
+Phase 4 (walkthrough dry-run) is next; see [TASKS.md](TASKS.md).
 
 ### Models
 
@@ -118,6 +119,14 @@ FastAPI app, no middleware / auth / CORS. Run locally with `uvicorn src.main:app
 ### Triage
 
 - [src/services/triage.py](src/services/triage.py) — `TriageService(drafter: DrafterService | None = None)` with a single public method `triage(validated: ValidatedBill) -> TriageDecision`. Routes per DESIGN.md §4: unmatched meter → Escalate(METER_UNASSIGNED); any HIGH flag → Escalate (routing key picked from the first HIGH via `_HIGH_FLAG_TO_ROUTING_KEY`, fallback UNCATEGORIZED) UNLESS every HIGH flag is in `_FIXABLE_HIGH_FLAG_TYPES = {UNIT_MISMATCH}` in which case → DraftForHumanReview; ≥3 MEDIUM → Escalate(UNCATEGORIZED); 2 MEDIUM → DraftForHumanReview; else → AutoResolve. On the DraftForHumanReview route, calls `drafter.draft(validated, meter, prior_readings)` if a drafter is attached; any exception (notably `DrafterParseError`) is caught, the route degrades to Escalate(DRAFTER_FAILURE), and a `FlagType.DRAFTER_FAILURE` flag carrying the exception type and message is appended to `validated.flags` (mutation of the pipeline's in-memory artifact, so the audit log preserves the failure mode). When `drafter is None` on a draft route, returns `drafter_output=None` and emits a logger warning — a test-friendly mode, not a production one.
+
+### Observability
+
+- [src/util/logging.py](src/util/logging.py) — stdlib `logging` + a small `JsonFormatter` that emits one JSON object per log line to stdout. `configure_logging()` is idempotent and is called from `src/main.py`'s lifespan handler (and at module load) so dev sessions and uvicorn-reload see structured output from the first request. `get_logger(service_name)` returns a logger that tags every record with `service=<name>` via a filter. `log_with_context(logger, level, message, **context)` lifts kwargs into the JSON body as siblings of `message` (the structured-logging idiom). `StageTimer` is a context manager that emits `"started"` / `"completed"` log lines with `stage`, any caller-passed kwargs (e.g. `bill_ref`), and `duration_ms`; `.set(...)` lets the inside of the block contribute exit-context fields. On exception inside the block the exit line is promoted to ERROR with `outcome="error"` and `error_type` and the exception then propagates.
+- Pipeline-stage logging lives in [src/routes/bills.py](src/routes/bills.py): each `POST /bills` wraps normalize, reconcile, validate, triage, and (on the approval endpoint) the approval flow with a `StageTimer`, passing `bill_ref=<audit_ref>` so a downstream log consumer can pivot on a single bill. Services themselves stay pure — wrapping at the call site keeps the pipeline functions stateless and free of logger injection. The drafter additionally logs the Anthropic model and the `response.usage` token counts (`input_tokens`, `output_tokens`, and any cache-related fields) inside `_log_api_response`, attached to the `drafter` service-tag.
+- [src/routes/status.py](src/routes/status.py) — `GET /status`. Always 200, read-only, no DB writes triggered. Returns `{service_name, version, db_state: {open, readings_count, audit_count, last_write_at}, audit_counts_24h: {route: count}, pending_drafted: int, anthropic_api_key_set: bool}`. Pending drafted = `DraftForHumanReview` audit entries whose `drafter_output` is set AND `parent_bill_external_ref` is None (so follow-up entries themselves are not counted) AND no other entry has `parent_bill_external_ref` pointing at them. Distinct from `GET /health` (defined in main.py) which stays as the simple liveness probe.
+- AuditLogStore (extended this prompt) gained `count()`, `last_write_at()`, `counts_by_route_since(cutoff)`, and `count_pending_drafted()`. MeterHistoryStore (extended this prompt) gained `readings_count()`. All read-only.
+- [tests/test_status.py](tests/test_status.py) — 4 tests: contract (200 + expected keys), zero-counts-on-empty-DB, 24-hour-cutoff filtering, and pending-drafted exclusion of approved/rejected follow-ups (plus auto-resolved and no-drafter-output cases).
 
 ### Demo harness
 
@@ -176,6 +185,10 @@ utility-bill-pipeline/
       __init__.py
       bills.py
       dependencies.py
+      status.py
+    util/
+      __init__.py
+      logging.py
     prompts/
       drafter_system.md
   tests/
@@ -194,6 +207,7 @@ utility-bill-pipeline/
     test_drafter.py
     test_triage.py
     test_approval.py
+    test_status.py
     test_design_sync.py
   scripts/
     check_design_sync.py
