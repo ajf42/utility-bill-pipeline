@@ -190,6 +190,30 @@ Alternatives considered: re-run full pipeline (rejected, see above); re-run vali
 
 ---
 
+## ADR-013 — Fail-loud on missing ANTHROPIC_API_KEY; load via `.env`
+
+**Status:** Accepted (2026-05-20)
+
+**Context:** The drafter is the AI surface of the prototype and the entire reason DraftForHumanReview exists as a triage route. The original lifespan in [src/main.py](src/main.py) read `ANTHROPIC_API_KEY` from the environment and, when it was unset, booted the app anyway with a `_logger.warning(...)` and `set_drafter(None)`. Triage on a DraftForHumanReview route would then return `drafter_output=None`, and the demo harness would walk every bill without ever firing the human-approval prompt — a silent degradation, exactly the failure mode the rest of this build is engineered against. The trigger was observing this in practice: `python scripts/demo.py --interactive` produced `outcome=draft-no-output` for two of six bills because the uvicorn process had no key in its env, and the warning was buried in stdout.
+
+Separately, the workflow forced the user to re-`export ANTHROPIC_API_KEY=...` in every new shell. Not the right ergonomics for a prototype meant to be re-run during walkthroughs.
+
+Alternatives considered:
+- **Keep the warning, surface the failure later (e.g., 500 on the first DraftForHumanReview request).** Rejected — late failure preserves the silent-degradation pathway for AutoResolve and Escalate routes, and for the walkthrough demo the failure surfaces in the middle of a narrated run instead of before it starts.
+- **Set the key as a permanent Windows user environment variable** (`setx`). Rejected — works, but the key lives outside the repo, invisible to anyone who clones it, OS-specific, and pollutes the global env. Not the 12-factor idiom.
+- **Use uvicorn's `--env-file` flag.** Rejected — only the uvicorn entry point sees it; scripts and any future Python entry that imports the app would not.
+
+**Decision:** Two changes:
+
+1. **Auto-load `.env`.** `src/main.py` calls `dotenv.load_dotenv()` once at module import, before the lifespan reads `os.environ`. The file is gitignored. Real OS env vars take precedence over `.env` values (the python-dotenv default `override=False`), so production-style deployments that inject secrets through the environment are unaffected. `python-dotenv` is added as a direct runtime dep in [pyproject.toml](pyproject.toml) even though it arrives transitively via `uvicorn[standard]`. (A `.env.example` template was briefly checked in alongside this change and then removed as duplication — the env surface is small enough that the README quick-start and the startup `RuntimeError` together name everything an operator needs.)
+2. **Hard-fail on missing key.** The lifespan raises `RuntimeError("ANTHROPIC_API_KEY is not set ...")` instead of logging a warning. uvicorn refuses to start; the demo's `_check_health` then surfaces a clear "could not reach .../health" message. The `draft-no-output` outcome becomes mechanically unreachable.
+
+Tests are unaffected because every `TestClient(app)` in `tests/` is constructed without a context manager and Starlette only fires the lifespan inside one — verified by inspection (no `with TestClient(app)` exists in the suite).
+
+**Consequences:** The drafter's presence becomes a startup-time invariant, not a runtime hope. The user sets the key once per clone in `.env` and never again. Anyone who clones the repo and tries to run the prototype gets an unambiguous, actionable error message on the first `uvicorn` attempt — naming both the env var and the `.env` file by name. The cost: the prototype now refuses to boot without a real key, which is exactly the point. A future production extension that needs to disable the drafter (e.g., for read-only inspection, or a degraded-mode operator dashboard) would split the AutoResolve / Escalate code paths from the drafter wiring at the dependency level, not at the lifespan — but that is not in scope here.
+
+---
+
 ## Spec gaps observed
 
 Gaps in [DESIGN.md](DESIGN.md) that surfaced during a build step and required either a decision or a clarification before proceeding. Per the ambiguity-handling rule in [CLAUDE.md](CLAUDE.md), inventing on ambiguous spec is forbidden — any gap encountered is logged here, optionally accompanied by a `TODO` in the code at the point of contact.

@@ -30,14 +30,17 @@ The fastest way to see the pipeline do real work is the canonical-bill harness. 
 ```bash
 git clone <this repo>
 cd utility-bill-pipeline
-python -m venv .venv && .venv/Scripts/activate          # Windows
+python -m venv .venv                                    # Windows
+.venv/Scripts/activate         
 # python -m venv .venv && source .venv/bin/activate     # macOS / Linux
 pip install -e ".[dev]"
-export ANTHROPIC_API_KEY=sk-ant-...                     # required for the drafter
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env              # paste your key; .env is gitignored
 python -m src.db.seed --reset                           # reset prototype.db to fixtures
 uvicorn src.main:app --reload                           # in one terminal
 python scripts/demo.py --auto-approve                   # in another
 ```
+
+The app auto-loads `.env` at startup and reads the key from `os.environ` exactly once per process. It refuses to start if the key is missing — no silent degradation. (Optional: `DB_PATH=...` to override the default `./prototype.db`.)
 
 `--auto-approve` runs hands-off and approves every drafted resolution automatically. Use `--interactive` to pause at each DraftForHumanReview case with an `[A]pprove / [R]eject / [S]kip` prompt — that mode is the one to use during a live walkthrough.
 

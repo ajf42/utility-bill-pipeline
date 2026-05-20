@@ -61,3 +61,10 @@ Verbatim from [DESIGN.md](DESIGN.md) §6.
 - [ ] All sample scenarios documented in `samples/scenarios.md` with expected outcomes — commit `________`
 - [ ] One out-loud dry-run — commit `________`
 - [ ] Anything caught in the dry-run that breaks the flow — commit `________`
+
+## Fixes
+
+Caught during walkthrough dry-runs and small ergonomic gaps. One commit each.
+
+- [x] `deps`: add `uvicorn[standard]` to runtime deps — commit `________` (README documented `uvicorn src.main:app --reload` but uvicorn was never declared; fresh installs had no `uvicorn.exe` in the venv)
+- [x] `config`: auto-load `ANTHROPIC_API_KEY` from `.env`; hard-fail when missing — commit `________` (ADR-013; previous behavior was a buried warning + silent `drafter_output=None`, observed degrading `python scripts/demo.py --interactive` to `draft-no-output` for two of six bills)

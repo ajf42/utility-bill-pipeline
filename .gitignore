@@ -37,7 +37,6 @@ coverage.xml
 # Environments / secrets
 .env
 .env.*
-!.env.example
 
 # Databases (SQLite)
 *.db
