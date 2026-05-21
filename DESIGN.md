@@ -1,7 +1,7 @@
 # Utility Bill Ingestion & Quality Assurance Pipeline — Internal Design Document
 
 **Status:** Draft v3 (internal working spec, 20-hour build)
-**Target conversation:** May 26, 2026 (~30–45 min technical walkthrough with Matt Richardson, Measurabl)
+**Target conversation:** May 26, 2026 (~30–45 min technical walkthrough with the target stakeholder at Measurabl)
 **Build window:** May 13 – May 25 (12 calendar days, ~20 focused hours)
 **Author:** Andrew Fitzpatrick
 
@@ -12,8 +12,8 @@
 Three documents live around this project. Knowing which is which keeps each one focused:
 
 1. **This document — internal working spec.** Engineering-deep. Decisions, tradeoffs, data model, exact build plan. Written for Andrew and for a fresh Claude instance handed the repo. Iterates throughout the build.
-2. **Scale-to-production doc** (drafted alongside this one). Takes the prototype and articulates what it becomes at tens of thousands of bills per month, distributed teams, real persistence, real observability, real SLAs. The artifact that signals enterprise-grade thinking to Matt. Every feature cut from the prototype gets named here with real architectural treatment.
-3. **Forward-facing design doc** (drafted after this one stabilizes). Problem-led narrative for Matt or for portfolio publication. Lighter on internals, heavier on architectural reasoning and operational framing.
+2. **Scale-to-production doc** (drafted alongside this one). Takes the prototype and articulates what it becomes at tens of thousands of bills per month, distributed teams, real persistence, real observability, real SLAs. The artifact that signals enterprise-grade thinking. Every feature cut from the prototype gets named here with real architectural treatment.
+3. **Forward-facing design doc** (drafted after this one stabilizes). Problem-led narrative for the target stakeholder or for portfolio publication. Lighter on internals, heavier on architectural reasoning and operational framing.
 
 Every design decision in this document carries an implicit tag of **prototype**, **scale-to-production**, or **both**. When a tag is not obvious from context, it is called out explicitly.
 
@@ -21,7 +21,7 @@ Every design decision in this document carries an implicit tag of **prototype**,
 
 ## Notes for the new Claude instance
 
-If you are reading this as the seed for a build session: this is the working spec. Start at Phase 1 of Section 6 and execute. The mandatory-on-every-change rules in Section 8 govern every commit. Update CLAUDE.md, DECISIONS.md, and TASKS.md as you go — they are not afterthoughts, they are the deliverable Matt cares about most. The audience for the build is Matt Richardson at Measurabl; calibrate every decision to "what would a process-and-operations leader want to see documented here." When in doubt, log the decision. Architecture choices in this document are starting points and may be revised — when they are, log the revision in DECISIONS.md with rationale.
+If you are reading this as the seed for a build session: this is the working spec. Start at Phase 1 of Section 6 and execute. The mandatory-on-every-change rules in Section 8 govern every commit. Update CLAUDE.md, DECISIONS.md, and TASKS.md as you go — they are not afterthoughts, they are the deliverable the audience cares about most. The audience for the build is a process-and-operations leader at Measurabl; calibrate every decision to "what would a process-and-operations leader want to see documented here." When in doubt, log the decision. Architecture choices in this document are starting points and may be revised — when they are, log the revision in DECISIONS.md with rationale.
 
 ---
 
@@ -37,7 +37,7 @@ Two readers. First, Andrew, as a working specification he iterates on. Second, a
 
 ### Success criteria for May 26
 
-The walkthrough succeeds if Matt comes away with three things: a clear understanding of how Andrew decomposes a data problem, evidence that Andrew can produce auditable engineering artifacts (not just code), and one or two concrete points where Matt can imagine handing real work over. The working prototype is the proof. The methodology artifacts and the scale-to-production doc are the differentiators.
+The walkthrough succeeds if the audience comes away with three things: a clear understanding of how Andrew decomposes a data problem, evidence that Andrew can produce auditable engineering artifacts (not just code), and one or two concrete points where the audience can imagine handing real work over. The working prototype is the proof. The methodology artifacts and the scale-to-production doc are the differentiators.
 
 ### What was deliberately cut from a larger scope, and why it matters
 
@@ -57,29 +57,29 @@ Measurabl ingests utility data from buildings in 93 countries on behalf of ~1,00
 - **Bulk upload templates** — XLSX templates emailed to `support@measurabl.com` or uploaded by portfolio members directly. Several template variants exist (Sites/Meters/Readings, Meters/Readings, Readings only, Connect Accounts).
 - **Data Collection Assist** — Measurabl's service team chasing down data on behalf of customers.
 
-The back-office team owns the exception layer across all of these: resolving Connect Integrity Issues, handling extraction exceptions, processing bulk templates, reconciling gaps and overlaps, chasing down customers on missing or anomalous data. Five teams. This is the workload Matt now owns. GRESB season makes it worse.
+The back-office team owns the exception layer across all of these: resolving Connect Integrity Issues, handling extraction exceptions, processing bulk templates, reconciling gaps and overlaps, chasing down customers on missing or anomalous data. Five teams. This is the workload the audience now owns. GRESB season makes it worse.
 
 Measurabl already has a customer-facing data quality product (**Data Manager**, inside their Navigate suite) that surfaces outliers, manages portfolios/buildings/meters/spaces, and is the dashboard their teams work from. This prototype is conceptually positioned **upstream** of Data Manager — it is the ingestion-and-triage layer that decides what gets written to the canonical readings table in the first place. It is not a replacement for Data Manager and the design never implies that it is.
 
 ### Where the leverage lives
 
-Two operational pain points stand out from public documentation and from Matt's situation:
+Two operational pain points stand out from public documentation and from the audience's situation:
 
 1. **The manual ingestion long-tail.** Every bill that doesn't come through Connect cleanly is human-touched. The cost grows linearly with portfolio expansion.
 2. **The quality-remediation loop.** Gaps, overlaps, intermittent meters, unit mismatches, building-name mismatches, and provider-specific quirks surface as tickets requiring human review and customer outreach.
 
 The prototype targets both.
 
-### Audience: Matt Richardson
+### Audience profile
 
-Matt is a process-and-operations leader. Sixteen years at Measurabl. Was the company's connective tissue (installs Slack, runs cybersecurity, ensures things work) and recently took ownership of the back-office function. Learns by reading manuals and applying them. Has limited formal data background but high systems intuition. Carries liability. Cannot trust black boxes. Cares more about how a system is reasoned about than about how it looks. Confirmed in prior conversation: he agreed on the need to templatize patterns and was openly curious about AI systems to do that work in place of manual processes.
+The target stakeholder is a process-and-operations leader with sixteen years at Measurabl, formerly the company's connective tissue (installs Slack, runs cybersecurity, ensures things work) and recently took ownership of the back-office function. Learns by reading manuals and applying them. Has limited formal data background but high systems intuition. Carries liability. Cannot trust black boxes. Cares more about how a system is reasoned about than about how it looks. Confirmed in prior conversation: agreed on the need to templatize patterns and was openly curious about AI systems to do that work in place of manual processes.
 
 Design implications:
 - Every decision is explicit and logged. Nothing implicit.
 - Code is readable over clever.
 - Operational concerns (lineage, idempotency, observability, escalation routing) are first-class, not afterthoughts.
 - AI is a component, not a feature. The system is glass-box even when an LLM is in the loop.
-- The methodology artifacts and the scale-to-production doc are the deliverables Matt will spend the most time on.
+- The methodology artifacts and the scale-to-production doc are the deliverables the audience will spend the most time on.
 
 ---
 
@@ -98,7 +98,7 @@ The methodology pattern transfers directly. This is the higher-leverage port —
 - **TASKS.md** — backlog with acceptance criteria, status, and commit references. One task per commit.
 - **Mandatory-on-every-change rules** — code runs, tests pass, inline docs updated, README updated, DECISIONS.md updated where relevant, TASKS.md updated, CLAUDE.md updated where relevant, committed under convention, before any task is marked done.
 
-This pattern answers two questions Matt will ask: "how does an offshore team execute against your design without sitting next to you" and "how does anyone audit decisions six months from now without re-explaining the system."
+This pattern answers two questions the audience will ask: "how does an offshore team execute against your design without sitting next to you" and "how does anyone audit decisions six months from now without re-explaining the system."
 
 ---
 
@@ -280,7 +280,7 @@ Three routes:
    - `overlap` — overlapping billing period detected
    - `format_mismatch` — unit, currency, or building-name mismatch
    - `inactive_meter` — reading on a meter marked inactive
-   - `uncategorized` — escalation that doesn't fit any other class (this bucket is explicitly visible — Matt's teams need to see where the rule set is weak)
+   - `uncategorized` — escalation that doesn't fit any other class (this bucket is explicitly visible — the back-office teams need to see where the rule set is weak)
 
 Thresholds are configurable and logged in DECISIONS.md. The reasoning behind each triage decision is recorded in the audit entry, not just the decision itself. This is the glass-box requirement.
 
@@ -481,7 +481,7 @@ Brief note (the meeting is downstream of the work). The walkthrough arc:
 
 **Where it goes next** (8 min, increased per Andrew's call). Open the scale-to-production doc. Walk the section headers — every feature cut from the prototype lives here with real architectural treatment. This is the highest-leverage segment of the conversation. Be ready for: "how does this handle 1M bills," "how do you keep the reference library current," "what about non-US providers."
 
-**Close** (2 min). Invite Matt to push on any of it.
+**Close** (2 min). Invite the audience to push on any of it.
 
 ---
 

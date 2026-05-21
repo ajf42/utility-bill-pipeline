@@ -10,7 +10,7 @@ The authoritative design spec is [DESIGN.md](DESIGN.md). Decisions logged here e
 
 **Status:** Accepted (2026-05-15)
 
-**Context:** The prototype is a data-shaped service with HTTP ingress, runtime validation of messy inputs, and an Anthropic API call. The 20-hour build window does not allow time for stack choices to be wrong. The audience (Matt) is a systems-intuition operations leader; readability of the resulting code matters more than runtime micro-performance.
+**Context:** The prototype is a data-shaped service with HTTP ingress, runtime validation of messy inputs, and an Anthropic API call. The 20-hour build window does not allow time for stack choices to be wrong. The audience is a systems-intuition operations leader; readability of the resulting code matters more than runtime micro-performance.
 
 Alternatives considered: Node + Express + Zod (rejected — weaker tabular tooling, and the structural-quality signals lean on pandas-shaped work); Go + chi (rejected — slower to write, weaker AI tooling); a notebook-first prototype (rejected — would not demonstrate the production-discipline pattern the methodology artifacts depend on).
 
@@ -38,7 +38,7 @@ Alternatives considered: in-memory dict-backed store (rejected — would not exe
 
 **Status:** Accepted (2026-05-15)
 
-**Context:** Every normalized field needs a confidence signal so triage can decide what to trust. The temptingly-cheap path is to ask the LLM to score its own extractions. That path is wrong for this audience and this problem: LLM-self-reported confidence is well-known to be poorly calibrated, and Matt's situation is "I am liable for the output and cannot trust black boxes." Confidence that originates inside the model cannot be audited later.
+**Context:** Every normalized field needs a confidence signal so triage can decide what to trust. The temptingly-cheap path is to ask the LLM to score its own extractions. That path is wrong for this audience and this problem: LLM-self-reported confidence is well-known to be poorly calibrated, and the audience's situation is "I am liable for the output and cannot trust black boxes." Confidence that originates inside the model cannot be audited later.
 
 Alternatives considered: LLM self-reported confidence (rejected as above); cross-extraction-agreement — run extraction twice with different prompts and treat agreement as the signal (the right answer at production scale, but not earned in 20 hours and not where the prototype's leverage lives).
 
@@ -52,7 +52,7 @@ Alternatives considered: LLM self-reported confidence (rejected as above); cross
 
 **Status:** Accepted (2026-05-15)
 
-**Context:** Triage is the act of deciding, per bill, what happens next. The decision space has obvious extremes — "the bill is clean, write it" and "the bill is unfixable, send it to a team" — but Matt's operational reality is that the middle is where most of the cost lives. A two-route system collapses the middle into Escalate and loses the highest-leverage AI surface in the system. A four-route system pulls in AutoEstimate, which is genuinely useful but is high logic complexity and the most likely route to be implemented poorly in a 20-hour window.
+**Context:** Triage is the act of deciding, per bill, what happens next. The decision space has obvious extremes — "the bill is clean, write it" and "the bill is unfixable, send it to a team" — but the operational reality is that the middle is where most of the cost lives. A two-route system collapses the middle into Escalate and loses the highest-leverage AI surface in the system. A four-route system pulls in AutoEstimate, which is genuinely useful but is high logic complexity and the most likely route to be implemented poorly in a 20-hour window.
 
 Alternatives considered: two routes — Resolve / Escalate (rejected, see above); four routes including AutoEstimate (deferred to scale-to-production where it gets real treatment instead of a rushed one).
 
@@ -64,7 +64,7 @@ Alternatives considered: two routes — Resolve / Escalate (rejected, see above)
 
 The reasoning behind each decision is recorded in the audit entry, not just the decision itself.
 
-**Consequences:** The middle route is where the demo highlight lives — a Claude-drafted customer email on a unit-mismatch case is the "Claude as your back-office writer, gated on human approval" moment. The `uncategorized` escalation bucket is deliberately visible: it makes weak spots in the rule set legible to Matt's teams instead of swallowing them. The deferred AutoEstimate route is named and treated in the scale-to-production doc; this is the explicit scale path for triage and the prototype's three-route model is a clean foundation it slots onto.
+**Consequences:** The middle route is where the demo highlight lives — a Claude-drafted customer email on a unit-mismatch case is the "Claude as your back-office writer, gated on human approval" moment. The `uncategorized` escalation bucket is deliberately visible: it makes weak spots in the rule set legible to the back-office teams instead of swallowing them. The deferred AutoEstimate route is named and treated in the scale-to-production doc; this is the explicit scale path for triage and the prototype's three-route model is a clean foundation it slots onto.
 
 ---
 
@@ -72,7 +72,7 @@ The reasoning behind each decision is recorded in the audit entry, not just the 
 
 **Status:** Accepted (2026-05-15)
 
-**Context:** A utility ingestion pipeline can be modeled many ways. Most generic data-cleaning tutorials would land on a flat "bill" entity with optional foreign keys. The audience and problem demand the opposite: Matt's teams work inside Measurabl's actual hierarchy every day, the Help Center documents that hierarchy unambiguously, and the published bulk-upload templates encode the field-level constraints (unit locked to meter, currency locked to meter, building name must match a Site, readings are append-only).
+**Context:** A utility ingestion pipeline can be modeled many ways. Most generic data-cleaning tutorials would land on a flat "bill" entity with optional foreign keys. The audience and problem demand the opposite: the back-office teams work inside Measurabl's actual hierarchy every day, the Help Center documents that hierarchy unambiguously, and the published bulk-upload templates encode the field-level constraints (unit locked to meter, currency locked to meter, building name must match a Site, readings are append-only).
 
 Alternatives considered: a generic Bill entity with loose FKs (rejected — collapses domain constraints that matter); modeling only the layers the heuristics touch directly, e.g., Meter and Reading (rejected — would make foreign keys dishonest, and "the entity model matches your published one" is a credibility signal worth more than the lines of code it costs).
 
@@ -80,7 +80,7 @@ Alternatives considered: a generic Bill entity with loose FKs (rejected — coll
 
 Hard rules encoded in validation: meter locked to one unit (mismatch = high-severity flag); readings append-only (corrections via flagged workflow, not overwrite); building name must match an existing Site (mismatch = high-severity); reading on an inactive meter = high-severity.
 
-**Consequences:** Walking Matt through `src/models/entities.py` is recognizable on sight. Every validation rule has a clean home (the entity it constrains). The cost is a few extra fixture rows for Portfolios and Sites; the benefit is that the prototype demonstrably understands the operational object model rather than imposing a generic one.
+**Consequences:** Walking the audience through `src/models/entities.py` is recognizable on sight. Every validation rule has a clean home (the entity it constrains). The cost is a few extra fixture rows for Portfolios and Sites; the benefit is that the prototype demonstrably understands the operational object model rather than imposing a generic one.
 
 ---
 
@@ -106,13 +106,13 @@ Alternatives considered: pydantic-level `field_validator` requiring an injected 
 
 **Status:** Accepted (2026-05-18)
 
-**Context:** The persistence layer needs CRUD across five tables, one cross-table join (the three-key meter resolution in reconciliation), an idempotent schema, and round-trippable storage of structured payloads on the audit log. The natural Python options were SQLAlchemy (Core or ORM), Peewee, or stdlib `sqlite3`. The audience for this build is Matt Richardson, an operations leader who reads SQL more comfortably than ORM call chains, and the prototype budget is 20 focused hours total.
+**Context:** The persistence layer needs CRUD across five tables, one cross-table join (the three-key meter resolution in reconciliation), an idempotent schema, and round-trippable storage of structured payloads on the audit log. The natural Python options were SQLAlchemy (Core or ORM), Peewee, or stdlib `sqlite3`. The audience is an operations leader who reads SQL more comfortably than ORM call chains, and the prototype budget is 20 focused hours total.
 
 Alternatives considered: SQLAlchemy ORM (rejected — adds a dependency, introduces session/unit-of-work concepts that don't help the prototype and that obscure the SQL during a walkthrough); SQLAlchemy Core (rejected — Core-level SQL expressions still read less obviously than literal SQL strings, and the migration to Postgres in production is a connection-string change either way); Peewee (rejected — fewer warts than full SQLAlchemy but still ORM-flavored, still a dependency).
 
 **Decision:** Use stdlib `sqlite3` directly. Schema lives in [src/db/schema.sql](src/db/schema.sql) as literal SQL the audience can read on its own. Two store classes ([src/db/store.py](src/db/store.py)) wrap a `sqlite3.Connection` each, with `PRAGMA foreign_keys = ON` set per connection. Row-to-model and model-to-row translation are small private functions at the bottom of the file. All writes commit explicitly. Pydantic models from `src.models` are the only shapes the stores accept or return; SQL stays inside this module.
 
-**Consequences:** Walking Matt through [src/db/store.py](src/db/store.py) is walking him through SQL, which is the point. Zero added dependency surface. The cost is hand-mapping rows to models, which adds maybe 60 lines and is a known pattern. The production hook is unchanged: swap the connection target to Postgres and the SQL ports as-is (SQLite-specific bits — the `PRAGMA`, `TEXT` for dates — are isolated and documented). Cross-field validation between `Reading` and `Meter` from [ADR-006](#adr-006--cross-field-validation-between-reading-and-meter-is-deferred-to-the-validation-service) remains in the validation service; the store does not try to enforce it.
+**Consequences:** Walking the audience through [src/db/store.py](src/db/store.py) is walking through SQL, which is the point. Zero added dependency surface. The cost is hand-mapping rows to models, which adds maybe 60 lines and is a known pattern. The production hook is unchanged: swap the connection target to Postgres and the SQL ports as-is (SQLite-specific bits — the `PRAGMA`, `TEXT` for dates — are isolated and documented). Cross-field validation between `Reading` and `Meter` from [ADR-006](#adr-006--cross-field-validation-between-reading-and-meter-is-deferred-to-the-validation-service) remains in the validation service; the store does not try to enforce it.
 
 ---
 
@@ -136,7 +136,7 @@ A secondary decision under the same heading: how to represent "this check did no
 
 **Status:** Accepted (2026-05-19)
 
-**Context:** The Resolution Drafter is a single Anthropic API call that takes a flagged bill and produces a structured drafted resolution. The system prompt is several hundred words long, contains worked examples, and is the load-bearing document that defines drafter behavior. Three natural places for it: a `str` constant inside [src/services/drafter.py](src/services/drafter.py), a `.py` module under `src/prompts/`, or a standalone markdown file under `src/prompts/`. The audience considerations from [ADR-005](#adr-005--entity-model-aligned-to-measurabls-published-hierarchy) apply — Matt reads the prompt as part of the walkthrough and judges whether the AI is genuinely glass-box.
+**Context:** The Resolution Drafter is a single Anthropic API call that takes a flagged bill and produces a structured drafted resolution. The system prompt is several hundred words long, contains worked examples, and is the load-bearing document that defines drafter behavior. Three natural places for it: a `str` constant inside [src/services/drafter.py](src/services/drafter.py), a `.py` module under `src/prompts/`, or a standalone markdown file under `src/prompts/`. The audience considerations from [ADR-005](#adr-005--entity-model-aligned-to-measurabls-published-hierarchy) apply — the audience reads the prompt as part of the walkthrough and judges whether the AI is genuinely glass-box.
 
 Alternatives considered: prompt as a Python `str` triple-quoted constant (rejected — long prose embedded in a code file reads worse on review, and editing it triggers a code change for what is really a content change); prompt as a Python module exporting a constant (rejected — same downside, plus implies it should be importable as Python rather than read by reviewers).
 
@@ -164,13 +164,13 @@ Alternatives considered: free-form text + "respond as JSON" instructions + manua
 
 **Status:** Accepted (2026-05-19)
 
-**Context:** When the Anthropic call comes back with a response the drafter cannot parse — no `tool_use` block, malformed input, pydantic validation failure — the service has to decide what to do. Three obvious paths: retry once with a softened prompt, fall back to returning a partial / text-only DrafterOutput, or raise immediately and let the caller decide. The audience requirement from [ADR-003](#adr-003--structural-only-confidence-model-no-llm-self-reported-confidence) carries here: Matt's situation is that he is liable for the output and cannot trust silent recovery from AI weirdness.
+**Context:** When the Anthropic call comes back with a response the drafter cannot parse — no `tool_use` block, malformed input, pydantic validation failure — the service has to decide what to do. Three obvious paths: retry once with a softened prompt, fall back to returning a partial / text-only DrafterOutput, or raise immediately and let the caller decide. The audience requirement from [ADR-003](#adr-003--structural-only-confidence-model-no-llm-self-reported-confidence) carries here: the audience is liable for the output and cannot trust silent recovery from AI weirdness.
 
 Alternatives considered: silent retry with a tightened prompt (rejected — masks a real signal that the prompt or schema is drifting from the model's behavior, and turns one bad call into two); construct a degraded DrafterOutput from the text portion of the response with `proposed_action=REQUEST_CLARIFICATION` (rejected — invents fields the model did not produce, which is the exact opposite of glass-box).
 
 **Decision:** Any parse failure raises `DrafterParseError`, with the raw response attached on `.raw_response` so the audit log can record exactly what came back. The drafter does not retry, does not degrade, and does not catch. The triage caller (built in the next Phase 3 prompt) is responsible for deciding what to do — typically: route the bill to Escalate with `routing_key=UNCATEGORIZED`, attach the raw response to the audit entry, and surface the failure to the back-office queue. Retry/backoff for transient network errors is a scale-doc concern, not a prototype one.
 
-**Consequences:** Every drafter failure is visible at the boundary, in the audit log, with the raw response preserved. A prompt drift or schema mismatch shows up the first time it happens, not muffled inside an exponential-backoff loop. The cost is that a single bad API response causes a single bill to escalate — which is exactly the operational behavior Matt's teams need to see, since "Claude did something unexpected" is precisely the moment a human review is warranted.
+**Consequences:** Every drafter failure is visible at the boundary, in the audit log, with the raw response preserved. A prompt drift or schema mismatch shows up the first time it happens, not muffled inside an exponential-backoff loop. The cost is that a single bad API response causes a single bill to escalate — which is exactly the operational behavior the back-office teams need to see, since "Claude did something unexpected" is precisely the moment a human review is warranted.
 
 ---
 

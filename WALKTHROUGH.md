@@ -268,7 +268,7 @@ A bill comes in for a meter that exists in the store but is flagged inactive. `I
 **Routing key:** `INACTIVE_METER`
 **Outcome:** escalation. In production this would route to the account-status queue.
 
-What the architecture is showing here: not every issue is fixable by the model, and the system is honest about that. The routing key is the operationally meaningful signal — "send this to the team that owns inactive-meter resolution" — not a generic "something went wrong." Per [ADR-004](DECISIONS.md#adr-004--three-route-triage-autoresolve--draftforhumanreview--escalate) every escalation carries a routing key for exactly this reason: Matt's back-office team is multiple teams, and the routing has to mean something on its way out.
+What the architecture is showing here: not every issue is fixable by the model, and the system is honest about that. The routing key is the operationally meaningful signal — "send this to the team that owns inactive-meter resolution" — not a generic "something went wrong." Per [ADR-004](DECISIONS.md#adr-004--three-route-triage-autoresolve--draftforhumanreview--escalate) every escalation carries a routing key for exactly this reason: the back-office function is multiple teams, and the routing has to mean something on its way out.
 
 ---
 
@@ -283,7 +283,7 @@ What the architecture is showing here: not every issue is fixable by the model, 
 | 5 | Unknown provider + unit mismatch               | DRAFT_FOR_HUMAN_REVIEW | 1     | drafter requests clarification (no auto-fix)   |
 | 6 | Inactive meter                                 | ESCALATE               | 2     | escalated → INACTIVE_METER                     |
 
-Every row above has a corresponding `AuditEntry` row in SQLite, queryable by `bill_external_ref`. On approved DraftForHumanReview cases, a second linked entry records the approval, the applied correction, and the resulting `reading_id`; the link is `AuditEntry.parent_bill_external_ref`. The audit trail is the deliverable Matt's teams reconstruct against months later.
+Every row above has a corresponding `AuditEntry` row in SQLite, queryable by `bill_external_ref`. On approved DraftForHumanReview cases, a second linked entry records the approval, the applied correction, and the resulting `reading_id`; the link is `AuditEntry.parent_bill_external_ref`. The audit trail is the deliverable the back-office teams reconstruct against months later.
 
 ---
 
