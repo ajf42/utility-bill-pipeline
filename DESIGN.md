@@ -72,7 +72,7 @@ The prototype targets both.
 
 ### Audience profile
 
-The target stakeholder is a process-and-operations leader with sixteen years at Measurabl, formerly the company's connective tissue (installs Slack, runs cybersecurity, ensures things work) and recently took ownership of the back-office function. Learns by reading manuals and applying them. Has limited formal data background but high systems intuition. Carries liability. Cannot trust black boxes. Cares more about how a system is reasoned about than about how it looks. Confirmed in prior conversation: agreed on the need to templatize patterns and was openly curious about AI systems to do that work in place of manual processes.
+The target stakeholder is a data-and-operations leader who has had a few roles at Measurabl, and recently took ownership of the back-office function. He carries liability and cannot trust black boxes. Is openly curious about AI systems to do that work in place of manual processes but needs to see at least the same level of reliability that those manual processes possess.
 
 Design implications:
 - Every decision is explicit and logged. Nothing implicit.
@@ -467,25 +467,7 @@ If the build runs **ahead** of schedule, the highest-ROI additions in order are:
 
 ---
 
-## 7. The May 26 Walkthrough
-
-Brief note (the meeting is downstream of the work). The walkthrough arc:
-
-**Open** (3 min). Frame the system as upstream of Data Manager. Sketch the six-stage decomposition at the architecture diagram.
-
-**Decisions** (10 min). Walk through three or four key decisions from DECISIONS.md: entity model aligned to Measurabl's actual hierarchy, structural-only confidence model, three-route triage with structured escalation routing, deliberately simplified reference library.
-
-**Run it** (10 min). Walk through the 4 sample scenarios end-to-end. The Resolution Drafter moment (a Claude-drafted customer email on a unit-mismatch case) is the demo highlight.
-
-**The methodology** (5 min). Open CLAUDE.md, DECISIONS.md, TASKS.md. Frame as the operations system for distributed engineering work.
-
-**Where it goes next** (8 min, increased per Andrew's call). Open the scale-to-production doc. Walk the section headers — every feature cut from the prototype lives here with real architectural treatment. This is the highest-leverage segment of the conversation. Be ready for: "how does this handle 1M bills," "how do you keep the reference library current," "what about non-US providers."
-
-**Close** (2 min). Invite the audience to push on any of it.
-
----
-
-## 8. Rules and Patterns for the Build
+## 7. Rules and Patterns for the Build
 
 ### Mandatory on every change
 
@@ -534,17 +516,13 @@ If real utility bills are referenced in fixtures, all PII (account numbers, cust
 
 ---
 
-## 9. Open Questions
+## 8. Open Questions
 
 Andrew to decide (or to revisit during build):
 
-- Real Claude API vs mocked during development. Recommendation: real API during the build with rate-limiting; mocked in tests so tests run free.
-- Repo public vs private. Recommendation: public, consistent with prior projects.
-- Walkthrough deck or just the repo. Recommendation: no deck. The repo plus the Mermaid diagram in the README is the artifact.
-
 ---
 
-## 10. Reference Materials
+## 9. Reference Materials
 
 - supplier-emissions-normalizer (architectural bones): `https://github.com/ajf42/supplier-emissions-normalizer`
 - FormulationImpactAPI (methodology pattern): `https://github.com/ajf42/FormulationImpactAPI`
